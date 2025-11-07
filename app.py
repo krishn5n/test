@@ -10,6 +10,11 @@ def get_code():
     except Exception as e:
         return {"error": str(e)}, 500
 
+@app.route("/",methods = ["GET"])
+def get():
+    return {}, 200
+
+
 if __name__ == "__main__":
     # host='0.0.0.0' makes it accessible from other devices in same network
     app.run(host="0.0.0.0", port=5000)
