@@ -2115,3 +2115,95 @@ int main() {
     yylex();
     return 0;
 }
+
+CODE OPTIMIZATION
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <ctype.h>
+#define MAX 100
+
+typedef struct {
+    char lhs[10];
+    char op1[10];
+    char op[3];
+    char op2[10];
+} TAC;
+
+TAC code[MAX];
+int n;
+ 
+
+int isNumber(char *str) {
+    for (int i = 0; str[i]; i++)
+        if (!isdigit(str[i])) return 0;
+    return 1;
+}
+
+ 
+// Constant folding
+void constantFolding() {
+    for (int i = 0; i < n; i++) {
+        if (isNumber(code[i].op1) && isNumber(code[i].op2)) {
+            int a = atoi(code[i].op1);
+            int b = atoi(code[i].op2);
+            int res;
+
+            if (strcmp(code[i].op, "+") == 0)
+                res = a + b;
+            else if (strcmp(code[i].op, "-") == 0)
+                res = a - b;
+            else if (strcmp(code[i].op, "*") == 0)
+                res = a * b;
+            else if (strcmp(code[i].op, "/") == 0 && b != 0)
+                res = a / b;
+            else
+                continue;
+            sprintf(code[i].op1, "%d", res);
+            strcpy(code[i].op, "=");
+            strcpy(code[i].op2, "");
+        }
+    }
+}
+
+void deadCodeElimination() {
+    int used[MAX] = {0};
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            if (strcmp(code[i].lhs, code[j].op1) == 0 ||
+                strcmp(code[i].lhs, code[j].op2) == 0)
+                used[i] = 1;
+        }
+    }
+
+    printf("\nAfter Dead Code Elimination:\n");
+    for (int i = 0; i < n; i++) {
+        if (used[i] || i == n - 1) // keep last line (usually output)
+            printf("%s = %s %s %s\n", code[i].lhs, code[i].op1, code[i].op, code[i].op2);
+    }
+}
+
+ 
+
+int main() {
+    printf("Enter number of 3-address code statements: ");
+    scanf("%d", &n);
+    printf("Enter the code (e.g., t1 = 2 + 3):\n");
+    for (int i = 0; i < n; i++) {
+        scanf("%s = %s %s %s", code[i].lhs, code[i].op1, code[i].op, code[i].op2);
+    }
+
+    printf("\nOriginal Code:\n");
+    for (int i = 0; i < n; i++)
+        printf("%s = %s %s %s\n", code[i].lhs, code[i].op1, code[i].op, code[i].op2);
+
+    constantFolding();
+
+    printf("\nAfter Constant Folding:\n");
+    for (int i = 0; i < n; i++)
+        printf("%s = %s %s %s\n", code[i].lhs, code[i].op1, code[i].op, code[i].op2);
+
+    deadCodeElimination();
+    return 0;
+
+}
