@@ -322,7 +322,117 @@ int main() {
     return 0;
 }
 
+Operator Precedence Parsing
 
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#define MAX 20
+
+char grammar[MAX][MAX];
+char precedenceTable[MAX][MAX];
+char terminals[MAX];
+int n, tCount = 0;
+
+// Find position of terminal in table
+int position(char c) {
+    for (int i = 0; i < tCount; i++)
+        if (terminals[i] == c)
+            return i;
+    return -1;
+}
+
+// Build precedence table manually or automatically
+void createTable() {
+    printf("\nEnter the terminals (no spaces): ");
+    scanf("%s", terminals);
+    tCount = strlen(terminals);
+
+    printf("\nEnter operator precedence table (%dx%d):\n", tCount, tCount);
+    printf("Enter relations as <, >, = or . for no relation.\n");
+    for (int i = 0; i < tCount; i++) {
+        for (int j = 0; j < tCount; j++) {
+            printf("Relation between %c and %c: ", terminals[i], terminals[j]);
+            scanf(" %c", &precedenceTable[i][j]);
+        }
+    }
+
+    printf("\nPrecedence Table:\n   ");
+    for (int i = 0; i < tCount; i++) printf("  %c", terminals[i]);
+    printf("\n");
+    for (int i = 0; i < tCount; i++) {
+        printf(" %c ", terminals[i]);
+        for (int j = 0; j < tCount; j++) {
+            printf("  %c", precedenceTable[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+// Get precedence relation between two symbols
+char getRelation(char a, char b) {
+    int i = position(a);
+    int j = position(b);
+    if (i == -1 || j == -1)
+        return '.';
+    return precedenceTable[i][j];
+}
+
+int main() {
+    char input[50], stack[50] = "$";
+    int top = 1;
+    stack[0] = '$';
+
+    printf("Enter number of grammar rules: ");
+    scanf("%d", &n);
+    printf("Enter the grammar (e.g., E->E+E):\n");
+    for (int i = 0; i < n; i++) {
+        scanf("%s", grammar[i]);
+    }
+
+    createTable();
+
+    printf("\nEnter the input string to parse (end with $): ");
+    scanf("%s", input);
+
+    printf("\n--- Operator Precedence Parsing Steps ---\n");
+    int i = 0;
+    char a, b, rel;
+
+    while (1) {
+        a = stack[top - 1];
+        b = input[i];
+        rel = getRelation(a, b);
+
+        if (rel == '<' || rel == '=') {
+            // Shift
+            stack[top++] = b;
+            stack[top] = '\0';
+            i++;
+            printf("Shift: %-10s | Remaining: %s\n", stack, input + i);
+        } else if (rel == '>') {
+            // Reduce
+            top--;
+            printf("Reduce: %-10s | Remaining: %s\n", stack, input + i);
+        } else if (rel == '.' || rel == '\0') {
+            printf("Error: Invalid relation between %c and %c\n", a, b);
+            break;
+        }
+
+        if (stack[top - 1] == '$' && input[i] == '$') {
+            printf("\n✅ String accepted by Operator Precedence Parser!\n");
+            break;
+        }
+
+        if (i >= strlen(input)) {
+            printf("\n❌ String rejected.\n");
+            break;
+        }
+    }
+
+    return 0;
+}
 
 
 LL1 PARSER WIHT FIRST AND FOLLOW and LEFT RECURSION
