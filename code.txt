@@ -1,0 +1,2117 @@
+RE TO NFA with string validity
+
+#include <stdio.h>
+#include <string.h>
+#include <stdbool.h>
+#include <stdlib.h>
+
+#define MAX_STATES 50
+#define MAX_TRANS 100
+
+typedef struct {
+    int from, to;
+    char symbol; // 'e' for epsilon
+} Transition;
+
+typedef struct {
+    int numStates;
+    int startState;
+    int finalStates[MAX_STATES];
+    int numFinal;
+    Transition trans[MAX_TRANS];
+    int numTrans;
+} NFA;
+
+typedef struct {
+    int start, end;
+} NFAFragment;
+
+int stateCount = 0;
+
+// Add transition
+void addTrans(NFA *nfa, int from, int to, char symbol) {
+    nfa->trans[nfa->numTrans].from = from;
+    nfa->trans[nfa->numTrans].to = to;
+    nfa->trans[nfa->numTrans].symbol = symbol;
+    nfa->numTrans++;
+}
+
+// Print NFA transitions
+void printNFA(NFA *nfa) {
+    printf("\n========== NFA STRUCTURE ==========\n");
+    printf("Total States: %d\n", nfa->numStates);
+    printf("Start State: q%d\n", nfa->startState);
+    printf("Final State(s): ");
+    for (int i = 0; i < nfa->numFinal; i++) {
+        printf("q%d ", nfa->finalStates[i]);
+    }
+    printf("\n\nTransitions:\n");
+    printf("%-10s %-10s %-10s\n", "From", "Symbol", "To");
+    printf("------------------------------------\n");
+    for (int i = 0; i < nfa->numTrans; i++) {
+        printf("q%-9d ", nfa->trans[i].from);
+        if (nfa->trans[i].symbol == 'e') {
+            printf("%-10s ", "ε");
+        } else {
+            printf("%-10c ", nfa->trans[i].symbol);
+        }
+        printf("q%-9d\n", nfa->trans[i].to);
+    }
+    printf("===================================\n\n");
+}
+
+// Create fragment for single character
+NFAFragment charFragment(NFA *nfa, char c) {
+    NFAFragment frag;
+    frag.start = stateCount++;
+    frag.end = stateCount++;
+    addTrans(nfa, frag.start, frag.end, c);
+    return frag;
+}
+
+// Concatenate two fragments
+NFAFragment concatFragment(NFA *nfa, NFAFragment f1, NFAFragment f2) {
+    addTrans(nfa, f1.end, f2.start, 'e');
+    NFAFragment frag;
+    frag.start = f1.start;
+    frag.end = f2.end;
+    return frag;
+}
+
+// Union of two fragments (|)
+NFAFragment unionFragment(NFA *nfa, NFAFragment f1, NFAFragment f2) {
+    NFAFragment frag;
+    frag.start = stateCount++;
+    frag.end = stateCount++;
+    
+    addTrans(nfa, frag.start, f1.start, 'e');
+    addTrans(nfa, frag.start, f2.start, 'e');
+    addTrans(nfa, f1.end, frag.end, 'e');
+    addTrans(nfa, f2.end, frag.end, 'e');
+    
+    return frag;
+}
+
+// Kleene star (*)
+NFAFragment starFragment(NFA *nfa, NFAFragment f) {
+    NFAFragment frag;
+    frag.start = stateCount++;
+    frag.end = stateCount++;
+    
+    addTrans(nfa, frag.start, f.start, 'e');
+    addTrans(nfa, f.end, f.start, 'e');
+    addTrans(nfa, frag.start, frag.end, 'e');
+    addTrans(nfa, f.end, frag.end, 'e');
+    
+    return frag;
+}
+
+// Plus (+)
+NFAFragment plusFragment(NFA *nfa, NFAFragment f) {
+    NFAFragment frag;
+    frag.start = stateCount++;
+    frag.end = stateCount++;
+    
+    addTrans(nfa, frag.start, f.start, 'e');
+    addTrans(nfa, f.end, f.start, 'e');
+    addTrans(nfa, f.end, frag.end, 'e');
+    
+    return frag;
+}
+
+// Build NFA from postfix regex
+NFAFragment buildFromPostfix(NFA *nfa, char *postfix) {
+    NFAFragment stack[50];
+    int top = -1;
+    
+    for (int i = 0; i < strlen(postfix); i++) {
+        char c = postfix[i];
+        
+        if (c >= 'a' && c <= 'z') {
+            stack[++top] = charFragment(nfa, c);
+        } else if (c == '.') { // concat
+            NFAFragment f2 = stack[top--];
+            NFAFragment f1 = stack[top--];
+            stack[++top] = concatFragment(nfa, f1, f2);
+        } else if (c == '|') {
+            NFAFragment f2 = stack[top--];
+            NFAFragment f1 = stack[top--];
+            stack[++top] = unionFragment(nfa, f1, f2);
+        } else if (c == '*') {
+            NFAFragment f = stack[top--];
+            stack[++top] = starFragment(nfa, f);
+        } else if (c == '+') {
+            NFAFragment f = stack[top--];
+            stack[++top] = plusFragment(nfa, f);
+        }
+    }
+    
+    return stack[top];
+}
+
+// Convert infix to postfix
+void infixToPostfix(char *infix, char *postfix) {
+    char stack[100];
+    int top = -1, j = 0;
+    
+    // Add explicit concat operator
+    char temp[200];
+    int k = 0;
+    for (int i = 0; i < strlen(infix); i++) {
+        temp[k++] = infix[i];
+        if ((infix[i] >= 'a' && infix[i] <= 'z') || infix[i] == ')' || infix[i] == '*' || infix[i] == '+') {
+            if (infix[i+1] >= 'a' && infix[i+1] <= 'z' || infix[i+1] == '(') {
+                temp[k++] = '.';
+            }
+        }
+    }
+    temp[k] = '\0';
+    
+    for (int i = 0; i < strlen(temp); i++) {
+        char c = temp[i];
+        
+        if (c >= 'a' && c <= 'z') {
+            postfix[j++] = c;
+        } else if (c == '(') {
+            stack[++top] = c;
+        } else if (c == ')') {
+            while (top >= 0 && stack[top] != '(') {
+                postfix[j++] = stack[top--];
+            }
+            top--; // pop '('
+        } else {
+            int prec = (c == '|') ? 1 : (c == '.') ? 2 : 3; // * and + have highest
+            while (top >= 0 && stack[top] != '(' && 
+                   ((stack[top] == '|') ? 1 : (stack[top] == '.') ? 2 : 3) >= prec) {
+                postfix[j++] = stack[top--];
+            }
+            stack[++top] = c;
+        }
+    }
+    
+    while (top >= 0) {
+        postfix[j++] = stack[top--];
+    }
+    postfix[j] = '\0';
+}
+
+// Build NFA from regex
+void buildNFA(NFA *nfa, char *regex) {
+    stateCount = 0;
+    nfa->numTrans = 0;
+    nfa->numFinal = 0;
+    
+    char postfix[200];
+    infixToPostfix(regex, postfix);
+    
+    NFAFragment frag = buildFromPostfix(nfa, postfix);
+    
+    nfa->startState = frag.start;
+    nfa->finalStates[0] = frag.end;
+    nfa->numFinal = 1;
+    nfa->numStates = stateCount;
+}
+
+// Epsilon closure
+void epsilonClosure(NFA *nfa, int state, bool visited[]) {
+    visited[state] = true;
+    for (int i = 0; i < nfa->numTrans; i++) {
+        if (nfa->trans[i].from == state && nfa->trans[i].symbol == 'e') {
+            if (!visited[nfa->trans[i].to]) {
+                epsilonClosure(nfa, nfa->trans[i].to, visited);
+            }
+        }
+    }
+}
+
+// Print current states
+void printStates(bool states[], int numStates) {
+    printf("{ ");
+    bool first = true;
+    for (int i = 0; i < numStates; i++) {
+        if (states[i]) {
+            if (!first) printf(", ");
+            printf("q%d", i);
+            first = false;
+        }
+    }
+    printf(" }");
+}
+
+// Move function
+void move(NFA *nfa, bool current[], char symbol, bool next[]) {
+    for (int i = 0; i < MAX_STATES; i++) next[i] = false;
+    
+    for (int i = 0; i < nfa->numStates; i++) {
+        if (current[i]) {
+            for (int j = 0; j < nfa->numTrans; j++) {
+                if (nfa->trans[j].from == i && nfa->trans[j].symbol == symbol) {
+                    next[nfa->trans[j].to] = true;
+                }
+            }
+        }
+    }
+}
+
+// Check string validity with processing steps
+bool checkString(NFA *nfa, char *str) {
+    bool current[MAX_STATES] = {false};
+    bool next[MAX_STATES] = {false};
+    
+    printf("\n========== STRING PROCESSING ==========\n");
+    
+    epsilonClosure(nfa, nfa->startState, current);
+    printf("Initial state (ε-closure): ");
+    printStates(current, nfa->numStates);
+    printf("\n\n");
+    
+    for (int i = 0; i < strlen(str); i++) {
+        printf("Step %d: Reading '%c'\n", i + 1, str[i]);
+        printf("  Current states: ");
+        printStates(current, nfa->numStates);
+        printf("\n");
+        
+        move(nfa, current, str[i], next);
+        
+        bool temp[MAX_STATES] = {false};
+        for (int j = 0; j < nfa->numStates; j++) {
+            if (next[j]) {
+                epsilonClosure(nfa, j, temp);
+            }
+        }
+        memcpy(current, temp, sizeof(current));
+        
+        printf("  After reading '%c' and ε-closure: ", str[i]);
+        printStates(current, nfa->numStates);
+        printf("\n\n");
+    }
+    
+    printf("Final states: ");
+    printStates(current, nfa->numStates);
+    printf("\n");
+    
+    for (int i = 0; i < nfa->numFinal; i++) {
+        if (current[nfa->finalStates[i]]) {
+            printf("Final state q%d is in current states.\n", nfa->finalStates[i]);
+            return true;
+        }
+    }
+    printf("No final state in current states.\n");
+    return false;
+}
+
+int main() {
+    NFA nfa;
+    char regex[100], str[100];
+    
+    printf("Enter regex (use a-z, |, *, +, ()): ");
+    scanf("%s", regex);
+    
+    buildNFA(&nfa, regex);
+    printNFA(&nfa);
+    
+    printf("Enter string to check: ");
+    scanf("%s", str);
+    
+    if (checkString(&nfa, str)) {
+        printf("\n==> String ACCEPTED\n");
+    } else {
+        printf("\n==> String REJECTED\n");
+    }
+    
+    return 0;
+}
+
+
+
+
+LL1 PARSER WIHT FIRST AND FOLLOW and LEFT RECURSION
+
+#include <stdio.h>
+#include <string.h>
+#include <stdbool.h>
+#include <ctype.h>
+
+#define MAX_PROD 50
+#define MAX_SYMBOLS 20
+#define MAX_LEN 50
+
+typedef struct {
+    char lhs;
+    char rhs[MAX_LEN];
+} Production;
+
+Production grammar[MAX_PROD];
+int prodCount = 0;
+
+char nonTerminals[MAX_SYMBOLS];
+char terminals[MAX_SYMBOLS];
+int ntCount = 0, tCount = 0;
+
+char first[MAX_SYMBOLS][MAX_SYMBOLS];
+char follow[MAX_SYMBOLS][MAX_SYMBOLS];
+int firstCount[MAX_SYMBOLS];
+int followCount[MAX_SYMBOLS];
+
+char parsingTable[MAX_SYMBOLS][MAX_SYMBOLS][MAX_LEN];
+
+// Function prototypes
+void inputGrammar();
+void removeLeftRecursion();
+void extractSymbols();
+void computeFirst();
+void computeFollow();
+void constructParsingTable();
+void printGrammar();
+void printFirst();
+void printFollow();
+void printParsingTable();
+bool isNonTerminal(char c);
+bool isTerminal(char c);
+int getNTIndex(char c);
+int getTIndex(char c);
+void addToSet(char set[], int *count, char c);
+bool isInSet(char set[], int count, char c);
+
+int main() {
+    printf("=== LL(1) Parser Generator ===\n\n");
+    
+    inputGrammar();
+    printf("\n--- Original Grammar ---\n");
+    printGrammar();
+    
+    removeLeftRecursion();
+    printf("\n--- Grammar after Left Recursion Removal ---\n");
+    printGrammar();
+    
+    extractSymbols();
+    
+    computeFirst();
+    printf("\n--- FIRST Sets ---\n");
+    printFirst();
+    
+    computeFollow();
+    printf("\n--- FOLLOW Sets ---\n");
+    printFollow();
+    
+    constructParsingTable();
+    printf("\n--- LL(1) Parsing Table ---\n");
+    printParsingTable();
+    
+    return 0;
+}
+
+void inputGrammar() {
+    printf("Enter number of productions: ");
+    scanf("%d", &prodCount);
+    getchar();
+    
+    printf("Enter productions (format: A=BC or A=a or A=@ for epsilon):\n");
+    for (int i = 0; i < prodCount; i++) {
+        char input[MAX_LEN];
+        printf("Production %d: ", i + 1);
+        fgets(input, MAX_LEN, stdin);
+        input[strcspn(input, "\n")] = 0;
+        
+        char *eq = strchr(input, '=');
+        if (eq) {
+            grammar[i].lhs = input[0];
+            strcpy(grammar[i].rhs, eq + 1);
+        }
+    }
+}
+
+void removeLeftRecursion() {
+    Production newGrammar[MAX_PROD];
+    int newCount = 0;
+    
+    for (int i = 0; i < prodCount; ) {
+        char lhs = grammar[i].lhs;
+        char alpha[MAX_PROD][MAX_LEN]; // Left recursive parts
+        char beta[MAX_PROD][MAX_LEN];  // Non-left recursive parts
+        int alphaCount = 0, betaCount = 0;
+        
+        // Collect all productions with same LHS
+        int j = i;
+        bool hasLeftRecursion = false;
+        
+        while (j < prodCount && grammar[j].lhs == lhs) {
+            if (grammar[j].rhs[0] == lhs) {
+                // Left recursive: A -> Aα
+                strcpy(alpha[alphaCount++], grammar[j].rhs + 1);
+                hasLeftRecursion = true;
+            } else {
+                // Not left recursive: A -> β
+                strcpy(beta[betaCount++], grammar[j].rhs);
+            }
+            j++;
+        }
+        
+        if (hasLeftRecursion) {
+            // Create new non-terminal A'
+            char newNT = lhs + '\'';
+            
+            // A -> βA' for each β
+            for (int k = 0; k < betaCount; k++) {
+                newGrammar[newCount].lhs = lhs;
+                sprintf(newGrammar[newCount].rhs, "%s%c", beta[k], newNT);
+                newCount++;
+            }
+            
+            // If no β exists, add A -> A'
+            if (betaCount == 0) {
+                newGrammar[newCount].lhs = lhs;
+                sprintf(newGrammar[newCount].rhs, "%c", newNT);
+                newCount++;
+            }
+            
+            // A' -> αA' for each α
+            for (int k = 0; k < alphaCount; k++) {
+                newGrammar[newCount].lhs = newNT;
+                sprintf(newGrammar[newCount].rhs, "%s%c", alpha[k], newNT);
+                newCount++;
+            }
+            
+            // A' -> ε
+            newGrammar[newCount].lhs = newNT;
+            strcpy(newGrammar[newCount].rhs, "@");
+            newCount++;
+        } else {
+            // No left recursion, copy as is
+            for (int k = i; k < j; k++) {
+                newGrammar[newCount++] = grammar[k];
+            }
+        }
+        
+        i = j;
+    }
+    
+    // Copy back to original grammar
+    for (int i = 0; i < newCount; i++) {
+        grammar[i] = newGrammar[i];
+    }
+    prodCount = newCount;
+}
+
+void extractSymbols() {
+    ntCount = tCount = 0;
+    
+    for (int i = 0; i < prodCount; i++) {
+        if (!isInSet(nonTerminals, ntCount, grammar[i].lhs)) {
+            nonTerminals[ntCount++] = grammar[i].lhs;
+        }
+        
+        for (int j = 0; grammar[i].rhs[j]; j++) {
+            char c = grammar[i].rhs[j];
+            if (isupper(c) && !isInSet(nonTerminals, ntCount, c)) {
+                nonTerminals[ntCount++] = c;
+            } else if ((islower(c) || c == '+' || c == '*' || c == '(' || c == ')') 
+                       && c != '@' && !isInSet(terminals, tCount, c)) {
+                terminals[tCount++] = c;
+            }
+        }
+    }
+    
+    // Add $ to terminals
+    if (!isInSet(terminals, tCount, '$')) {
+        terminals[tCount++] = '$';
+    }
+}
+
+void computeFirst() {
+    for (int i = 0; i < ntCount; i++) {
+        firstCount[i] = 0;
+    }
+    
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        
+        for (int i = 0; i < prodCount; i++) {
+            char lhs = grammar[i].lhs;
+            char *rhs = grammar[i].rhs;
+            int idx = getNTIndex(lhs);
+            
+            if (rhs[0] == '@') {
+                // ε production
+                if (!isInSet(first[idx], firstCount[idx], '@')) {
+                    addToSet(first[idx], &firstCount[idx], '@');
+                    changed = true;
+                }
+            } else if (isTerminal(rhs[0])) {
+                // First symbol is terminal
+                if (!isInSet(first[idx], firstCount[idx], rhs[0])) {
+                    addToSet(first[idx], &firstCount[idx], rhs[0]);
+                    changed = true;
+                }
+            } else {
+                // First symbol is non-terminal
+                int k = 0;
+                bool allHaveEpsilon = true;
+                
+                while (rhs[k] && isNonTerminal(rhs[k])) {
+                    int rhsIdx = getNTIndex(rhs[k]);
+                    bool hasEpsilon = false;
+                    
+                    for (int j = 0; j < firstCount[rhsIdx]; j++) {
+                        if (first[rhsIdx][j] == '@') {
+                            hasEpsilon = true;
+                        } else {
+                            if (!isInSet(first[idx], firstCount[idx], first[rhsIdx][j])) {
+                                addToSet(first[idx], &firstCount[idx], first[rhsIdx][j]);
+                                changed = true;
+                            }
+                        }
+                    }
+                    
+                    if (!hasEpsilon) {
+                        allHaveEpsilon = false;
+                        break;
+                    }
+                    k++;
+                }
+                
+                if (allHaveEpsilon) {
+                    if (rhs[k] == '\0') {
+                        if (!isInSet(first[idx], firstCount[idx], '@')) {
+                            addToSet(first[idx], &firstCount[idx], '@');
+                            changed = true;
+                        }
+                    } else if (isTerminal(rhs[k])) {
+                        if (!isInSet(first[idx], firstCount[idx], rhs[k])) {
+                            addToSet(first[idx], &firstCount[idx], rhs[k]);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void computeFollow() {
+    for (int i = 0; i < ntCount; i++) {
+        followCount[i] = 0;
+    }
+    
+    // Add $ to start symbol
+    addToSet(follow[0], &followCount[0], '$');
+    
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        
+        for (int i = 0; i < prodCount; i++) {
+            char *rhs = grammar[i].rhs;
+            char lhs = grammar[i].lhs;
+            
+            for (int j = 0; rhs[j]; j++) {
+                if (isNonTerminal(rhs[j])) {
+                    int idx = getNTIndex(rhs[j]);
+                    int k = j + 1;
+                    bool allHaveEpsilon = true;
+                    
+                    while (rhs[k]) {
+                        if (isTerminal(rhs[k])) {
+                            if (!isInSet(follow[idx], followCount[idx], rhs[k])) {
+                                addToSet(follow[idx], &followCount[idx], rhs[k]);
+                                changed = true;
+                            }
+                            allHaveEpsilon = false;
+                            break;
+                        } else {
+                            int nextIdx = getNTIndex(rhs[k]);
+                            bool hasEpsilon = false;
+                            
+                            for (int l = 0; l < firstCount[nextIdx]; l++) {
+                                if (first[nextIdx][l] == '@') {
+                                    hasEpsilon = true;
+                                } else {
+                                    if (!isInSet(follow[idx], followCount[idx], first[nextIdx][l])) {
+                                        addToSet(follow[idx], &followCount[idx], first[nextIdx][l]);
+                                        changed = true;
+                                    }
+                                }
+                            }
+                            
+                            if (!hasEpsilon) {
+                                allHaveEpsilon = false;
+                                break;
+                            }
+                        }
+                        k++;
+                    }
+                    
+                    if (allHaveEpsilon) {
+                        int lhsIdx = getNTIndex(lhs);
+                        for (int l = 0; l < followCount[lhsIdx]; l++) {
+                            if (!isInSet(follow[idx], followCount[idx], follow[lhsIdx][l])) {
+                                addToSet(follow[idx], &followCount[idx], follow[lhsIdx][l]);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void constructParsingTable() {
+    // Initialize table
+    for (int i = 0; i < ntCount; i++) {
+        for (int j = 0; j < tCount; j++) {
+            strcpy(parsingTable[i][j], "");
+        }
+    }
+    
+    for (int i = 0; i < prodCount; i++) {
+        char lhs = grammar[i].lhs;
+        char *rhs = grammar[i].rhs;
+        int ntIdx = getNTIndex(lhs);
+        
+        // For each terminal in FIRST(rhs)
+        if (rhs[0] == '@') {
+            // Epsilon production - add to FOLLOW(lhs)
+            for (int j = 0; j < followCount[ntIdx]; j++) {
+                int tIdx = getTIndex(follow[ntIdx][j]);
+                if (tIdx != -1) {
+                    sprintf(parsingTable[ntIdx][tIdx], "%c->%s", lhs, rhs);
+                }
+            }
+        } else if (isTerminal(rhs[0])) {
+            int tIdx = getTIndex(rhs[0]);
+            if (tIdx != -1) {
+                sprintf(parsingTable[ntIdx][tIdx], "%c->%s", lhs, rhs);
+            }
+        } else {
+            // First symbol is non-terminal
+            int k = 0;
+            bool allHaveEpsilon = true;
+            
+            while (rhs[k] && isNonTerminal(rhs[k])) {
+                int rhsIdx = getNTIndex(rhs[k]);
+                bool hasEpsilon = false;
+                
+                for (int j = 0; j < firstCount[rhsIdx]; j++) {
+                    if (first[rhsIdx][j] == '@') {
+                        hasEpsilon = true;
+                    } else {
+                        int tIdx = getTIndex(first[rhsIdx][j]);
+                        if (tIdx != -1) {
+                            sprintf(parsingTable[ntIdx][tIdx], "%c->%s", lhs, rhs);
+                        }
+                    }
+                }
+                
+                if (!hasEpsilon) {
+                    allHaveEpsilon = false;
+                    break;
+                }
+                k++;
+            }
+            
+            if (allHaveEpsilon) {
+                if (rhs[k] == '\0') {
+                    for (int j = 0; j < followCount[ntIdx]; j++) {
+                        int tIdx = getTIndex(follow[ntIdx][j]);
+                        if (tIdx != -1) {
+                            sprintf(parsingTable[ntIdx][tIdx], "%c->%s", lhs, rhs);
+                        }
+                    }
+                } else if (isTerminal(rhs[k])) {
+                    int tIdx = getTIndex(rhs[k]);
+                    if (tIdx != -1) {
+                        sprintf(parsingTable[ntIdx][tIdx], "%c->%s", lhs, rhs);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void printGrammar() {
+    for (int i = 0; i < prodCount; i++) {
+        printf("%c -> %s\n", grammar[i].lhs, grammar[i].rhs);
+    }
+}
+
+void printFirst() {
+    for (int i = 0; i < ntCount; i++) {
+        printf("FIRST(%c) = { ", nonTerminals[i]);
+        for (int j = 0; j < firstCount[i]; j++) {
+            printf("%c", first[i][j]);
+            if (j < firstCount[i] - 1) printf(", ");
+        }
+        printf(" }\n");
+    }
+}
+
+void printFollow() {
+    for (int i = 0; i < ntCount; i++) {
+        printf("FOLLOW(%c) = { ", nonTerminals[i]);
+        for (int j = 0; j < followCount[i]; j++) {
+            printf("%c", follow[i][j]);
+            if (j < followCount[i] - 1) printf(", ");
+        }
+        printf(" }\n");
+    }
+}
+
+void printParsingTable() {
+    printf("\n%-8s", "");
+    for (int j = 0; j < tCount; j++) {
+        printf("%-15c", terminals[j]);
+    }
+    printf("\n");
+    
+    for (int i = 0; i < ntCount; i++) {
+        printf("%-8c", nonTerminals[i]);
+        for (int j = 0; j < tCount; j++) {
+            if (strlen(parsingTable[i][j]) > 0) {
+                printf("%-15s", parsingTable[i][j]);
+            } else {
+                printf("%-15s", "-");
+            }
+        }
+        printf("\n");
+    }
+}
+
+bool isNonTerminal(char c) {
+    return isupper(c);
+}
+
+bool isTerminal(char c) {
+    return (islower(c) || c == '+' || c == '*' || c == '(' || c == ')' || c == '$') && c != '@';
+}
+
+int getNTIndex(char c) {
+    for (int i = 0; i < ntCount; i++) {
+        if (nonTerminals[i] == c) return i;
+    }
+    return -1;
+}
+
+int getTIndex(char c) {
+    for (int i = 0; i < tCount; i++) {
+        if (terminals[i] == c) return i;
+    }
+    return -1;
+}
+
+void addToSet(char set[], int *count, char c) {
+    if (!isInSet(set, *count, c)) {
+        set[(*count)++] = c;
+    }
+}
+
+bool isInSet(char set[], int count, char c) {
+    for (int i = 0; i < count; i++) {
+        if (set[i] == c) return true;
+    }
+    return false;
+}
+
+LR PARSER WITH CONSTRUCTION AND PARSING OF STRING
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <ctype.h>
+
+#define MAX_STACK 100
+#define MAX_INPUT 100
+#define MAX_STATES 50
+#define MAX_SYMBOLS 30
+#define MAX_PROD 20
+#define MAX_ITEMS 50
+
+// Grammar Production Structure
+typedef struct {
+    char lhs;
+    char rhs[20];
+    int rhsLen;
+} Production;
+
+// LR(0) Item Structure
+typedef struct {
+    int prodNum;
+    int dotPos;
+} Item;
+
+// State (Set of Items) Structure
+typedef struct {
+    Item items[MAX_ITEMS];
+    int itemCount;
+} State;
+
+// Stack Structure
+typedef struct {
+    int state[MAX_STACK];
+    char symbol[MAX_STACK];
+    int top;
+} Stack;
+
+// Action: s=shift, r=reduce, a=accept, e=error
+typedef struct {
+    char action;
+    int number;
+} Action;
+
+// Global Variables
+Production productions[MAX_PROD];
+int prodCount = 0;
+char terminals[MAX_SYMBOLS];
+char nonTerminals[MAX_SYMBOLS];
+int tCount = 0, ntCount = 0;
+char startSymbol;
+
+Action actionTable[MAX_STATES][MAX_SYMBOLS];
+int gotoTable[MAX_STATES][MAX_SYMBOLS];
+State states[MAX_STATES];
+int stateCount = 0;
+
+char firstSets[MAX_SYMBOLS][MAX_SYMBOLS];
+char followSets[MAX_SYMBOLS][MAX_SYMBOLS];
+int firstCount[MAX_SYMBOLS];
+int followCount[MAX_SYMBOLS];
+
+// Function Prototypes
+void inputGrammar();
+void extractSymbols();
+void augmentGrammar();
+void computeFirstSets();
+void computeFollowSets();
+void buildLR0Automaton();
+void closure(State *state);
+State gotoState(State *s, char symbol);
+bool stateExists(State *s, int *index);
+bool itemExists(State *s, Item item);
+void addItem(State *s, Item item);
+void constructSLRTable();
+void printGrammar();
+void printStates();
+void printParsingTable();
+void initStack(Stack *s);
+void push(Stack *s, int state, char symbol);
+void pop(Stack *s, int count);
+int getTerminalIndex(char c);
+int getNonTerminalIndex(char c);
+bool parseInput(char *input);
+void printStep(int step, Stack *s, char *input, int inputPos, char *action);
+void printProduction(int prodNum);
+void printItem(Item item);
+bool isTerminal(char c);
+bool isNonTerminal(char c);
+
+int main() {
+    char input[MAX_INPUT];
+    
+    printf("==============================================\n");
+    printf("   LR PARSER WITH CLOSURE CONSTRUCTION\n");
+    printf("==============================================\n\n");
+    
+    inputGrammar();
+    extractSymbols();
+    augmentGrammar();
+    
+    printf("\n--- Augmented Grammar ---\n");
+    printGrammar();
+    
+    printf("\n--- Computing FIRST Sets ---\n");
+    computeFirstSets();
+    
+    printf("\n--- Computing FOLLOW Sets ---\n");
+    computeFollowSets();
+    
+    printf("\n--- Building LR(0) Automaton ---\n");
+    buildLR0Automaton();
+    
+    printf("\n--- LR(0) States ---\n");
+    printStates();
+    
+    printf("\n--- Constructing SLR Parsing Table ---\n");
+    constructSLRTable();
+    
+    printParsingTable();
+    
+    // Parse multiple inputs
+    while (true) {
+        printf("\n==============================================\n");
+        printf("Enter input string (or 'exit' to quit):\n");
+        printf("Input: ");
+        scanf("%s", input);
+        
+        if (strcmp(input, "exit") == 0) {
+            break;
+        }
+        
+        strcat(input, "$");
+        
+        printf("\n--- Parsing: %s ---\n\n", input);
+        
+        if (parseInput(input)) {
+            printf("\n✓ INPUT STRING ACCEPTED!\n");
+        } else {
+            printf("\n✗ INPUT STRING REJECTED!\n");
+        }
+    }
+    
+    return 0;
+}
+
+void inputGrammar() {
+    printf("Enter number of productions: ");
+    scanf("%d", &prodCount);
+    getchar();
+    
+    printf("Enter start symbol: ");
+    scanf("%c", &startSymbol);
+    getchar();
+    
+    printf("\nEnter productions (format: E=E+T or E=T or F=i):\n");
+    printf("Note: Use lowercase for terminals, uppercase for non-terminals\n");
+    printf("      Use @ for epsilon (if needed)\n\n");
+    
+    for (int i = 0; i < prodCount; i++) {
+        char input[50];
+        printf("Production %d: ", i + 1);
+        fgets(input, 50, stdin);
+        input[strcspn(input, "\n")] = 0;
+        
+        char *eq = strchr(input, '=');
+        if (eq) {
+            productions[i].lhs = input[0];
+            strcpy(productions[i].rhs, eq + 1);
+            productions[i].rhsLen = strlen(productions[i].rhs);
+        }
+    }
+}
+
+void extractSymbols() {
+    tCount = 0;
+    ntCount = 0;
+    
+    for (int i = 0; i < prodCount; i++) {
+        bool found = false;
+        for (int j = 0; j < ntCount; j++) {
+            if (nonTerminals[j] == productions[i].lhs) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            nonTerminals[ntCount++] = productions[i].lhs;
+        }
+    }
+    
+    for (int i = 0; i < prodCount; i++) {
+        for (int j = 0; j < productions[i].rhsLen; j++) {
+            char c = productions[i].rhs[j];
+            if (!isupper(c) && c != '@') {
+                bool found = false;
+                for (int k = 0; k < tCount; k++) {
+                    if (terminals[k] == c) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    terminals[tCount++] = c;
+                }
+            }
+        }
+    }
+    
+    terminals[tCount++] = '$';
+}
+
+void augmentGrammar() {
+    for (int i = prodCount; i > 0; i--) {
+        productions[i] = productions[i-1];
+    }
+    
+    productions[0].lhs = '\'';
+    productions[0].rhs[0] = startSymbol;
+    productions[0].rhs[1] = '\0';
+    productions[0].rhsLen = 1;
+    prodCount++;
+    
+    for (int i = ntCount; i > 0; i--) {
+        nonTerminals[i] = nonTerminals[i-1];
+    }
+    nonTerminals[0] = '\'';
+    ntCount++;
+}
+
+void computeFirstSets() {
+    for (int i = 0; i < ntCount; i++) {
+        firstCount[i] = 0;
+    }
+    
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        
+        for (int i = 0; i < prodCount; i++) {
+            char lhs = productions[i].lhs;
+            char *rhs = productions[i].rhs;
+            int lhsIdx = getNonTerminalIndex(lhs);
+            
+            if (lhsIdx == -1) continue;
+            
+            if (rhs[0] == '@') {
+                bool found = false;
+                for (int j = 0; j < firstCount[lhsIdx]; j++) {
+                    if (firstSets[lhsIdx][j] == '@') {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    firstSets[lhsIdx][firstCount[lhsIdx]++] = '@';
+                    changed = true;
+                }
+            } else if (isTerminal(rhs[0])) {
+                bool found = false;
+                for (int j = 0; j < firstCount[lhsIdx]; j++) {
+                    if (firstSets[lhsIdx][j] == rhs[0]) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    firstSets[lhsIdx][firstCount[lhsIdx]++] = rhs[0];
+                    changed = true;
+                }
+            } else if (isNonTerminal(rhs[0])) {
+                int rhsIdx = getNonTerminalIndex(rhs[0]);
+                if (rhsIdx != -1) {
+                    for (int j = 0; j < firstCount[rhsIdx]; j++) {
+                        if (firstSets[rhsIdx][j] != '@') {
+                            bool found = false;
+                            for (int k = 0; k < firstCount[lhsIdx]; k++) {
+                                if (firstSets[lhsIdx][k] == firstSets[rhsIdx][j]) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) {
+                                firstSets[lhsIdx][firstCount[lhsIdx]++] = firstSets[rhsIdx][j];
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    printf("FIRST Sets:\n");
+    for (int i = 0; i < ntCount; i++) {
+        printf("FIRST(%c) = { ", nonTerminals[i]);
+        for (int j = 0; j < firstCount[i]; j++) {
+            printf("%c ", firstSets[i][j]);
+        }
+        printf("}\n");
+    }
+}
+
+void computeFollowSets() {
+    for (int i = 0; i < ntCount; i++) {
+        followCount[i] = 0;
+    }
+    
+    followSets[0][followCount[0]++] = '$';
+    
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        
+        for (int i = 0; i < prodCount; i++) {
+            char *rhs = productions[i].rhs;
+            int lhsIdx = getNonTerminalIndex(productions[i].lhs);
+            
+            for (int j = 0; j < productions[i].rhsLen; j++) {
+                if (isNonTerminal(rhs[j])) {
+                    int ntIdx = getNonTerminalIndex(rhs[j]);
+                    
+                    if (j == productions[i].rhsLen - 1) {
+                        for (int k = 0; k < followCount[lhsIdx]; k++) {
+                            bool found = false;
+                            for (int l = 0; l < followCount[ntIdx]; l++) {
+                                if (followSets[ntIdx][l] == followSets[lhsIdx][k]) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) {
+                                followSets[ntIdx][followCount[ntIdx]++] = followSets[lhsIdx][k];
+                                changed = true;
+                            }
+                        }
+                    } else if (isTerminal(rhs[j+1])) {
+                        bool found = false;
+                        for (int k = 0; k < followCount[ntIdx]; k++) {
+                            if (followSets[ntIdx][k] == rhs[j+1]) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            followSets[ntIdx][followCount[ntIdx]++] = rhs[j+1];
+                            changed = true;
+                        }
+                    } else if (isNonTerminal(rhs[j+1])) {
+                        int nextIdx = getNonTerminalIndex(rhs[j+1]);
+                        for (int k = 0; k < firstCount[nextIdx]; k++) {
+                            if (firstSets[nextIdx][k] != '@') {
+                                bool found = false;
+                                for (int l = 0; l < followCount[ntIdx]; l++) {
+                                    if (followSets[ntIdx][l] == firstSets[nextIdx][k]) {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if (!found) {
+                                    followSets[ntIdx][followCount[ntIdx]++] = firstSets[nextIdx][k];
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    printf("\nFOLLOW Sets:\n");
+    for (int i = 0; i < ntCount; i++) {
+        printf("FOLLOW(%c) = { ", nonTerminals[i]);
+        for (int j = 0; j < followCount[i]; j++) {
+            printf("%c ", followSets[i][j]);
+        }
+        printf("}\n");
+    }
+}
+
+void closure(State *state) {
+    bool changed = true;
+    
+    while (changed) {
+        changed = false;
+        int currentCount = state->itemCount;
+        
+        for (int i = 0; i < currentCount; i++) {
+            Item item = state->items[i];
+            char *rhs = productions[item.prodNum].rhs;
+            
+            if (item.dotPos < strlen(rhs)) {
+                char nextSymbol = rhs[item.dotPos];
+                
+                if (isNonTerminal(nextSymbol)) {
+                    for (int j = 0; j < prodCount; j++) {
+                        if (productions[j].lhs == nextSymbol) {
+                            Item newItem;
+                            newItem.prodNum = j;
+                            newItem.dotPos = 0;
+                            
+                            if (!itemExists(state, newItem)) {
+                                addItem(state, newItem);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+State gotoState(State *s, char symbol) {
+    State newState;
+    newState.itemCount = 0;
+    
+    for (int i = 0; i < s->itemCount; i++) {
+        Item item = s->items[i];
+        char *rhs = productions[item.prodNum].rhs;
+        
+        if (item.dotPos < strlen(rhs) && rhs[item.dotPos] == symbol) {
+            Item newItem;
+            newItem.prodNum = item.prodNum;
+            newItem.dotPos = item.dotPos + 1;
+            addItem(&newState, newItem);
+        }
+    }
+    
+    if (newState.itemCount > 0) {
+        closure(&newState);
+    }
+    
+    return newState;
+}
+
+bool stateExists(State *s, int *index) {
+    for (int i = 0; i < stateCount; i++) {
+        if (states[i].itemCount != s->itemCount) continue;
+        
+        bool same = true;
+        for (int j = 0; j < s->itemCount; j++) {
+            bool found = false;
+            for (int k = 0; k < states[i].itemCount; k++) {
+                if (states[i].items[k].prodNum == s->items[j].prodNum &&
+                    states[i].items[k].dotPos == s->items[j].dotPos) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                same = false;
+                break;
+            }
+        }
+        
+        if (same) {
+            *index = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool itemExists(State *s, Item item) {
+    for (int i = 0; i < s->itemCount; i++) {
+        if (s->items[i].prodNum == item.prodNum && 
+            s->items[i].dotPos == item.dotPos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void addItem(State *s, Item item) {
+    if (!itemExists(s, item)) {
+        s->items[s->itemCount++] = item;
+    }
+}
+
+void buildLR0Automaton() {
+    stateCount = 0;
+    
+    // Create I0
+    State I0;
+    I0.itemCount = 0;
+    Item startItem;
+    startItem.prodNum = 0;
+    startItem.dotPos = 0;
+    addItem(&I0, startItem);
+    closure(&I0);
+    
+    states[stateCount++] = I0;
+    
+    // Build states
+    for (int i = 0; i < stateCount; i++) {
+        // Try all symbols
+        for (int j = 0; j < ntCount; j++) {
+            State newState = gotoState(&states[i], nonTerminals[j]);
+            if (newState.itemCount > 0) {
+                int index;
+                if (!stateExists(&newState, &index)) {
+                    states[stateCount++] = newState;
+                }
+            }
+        }
+        
+        for (int j = 0; j < tCount - 1; j++) {
+            State newState = gotoState(&states[i], terminals[j]);
+            if (newState.itemCount > 0) {
+                int index;
+                if (!stateExists(&newState, &index)) {
+                    states[stateCount++] = newState;
+                }
+            }
+        }
+    }
+    
+    printf("Total states: %d\n", stateCount);
+}
+
+void constructSLRTable() {
+    // Initialize tables
+    for (int i = 0; i < MAX_STATES; i++) {
+        for (int j = 0; j < MAX_SYMBOLS; j++) {
+            actionTable[i][j].action = 'e';
+            actionTable[i][j].number = -1;
+            gotoTable[i][j] = -1;
+        }
+    }
+    
+    for (int i = 0; i < stateCount; i++) {
+        for (int j = 0; j < states[i].itemCount; j++) {
+            Item item = states[i].items[j];
+            char *rhs = productions[item.prodNum].rhs;
+            
+            if (item.dotPos < strlen(rhs)) {
+                char nextSymbol = rhs[item.dotPos];
+                
+                if (isTerminal(nextSymbol)) {
+                    State nextState = gotoState(&states[i], nextSymbol);
+                    int index;
+                    if (stateExists(&nextState, &index)) {
+                        int tIdx = getTerminalIndex(nextSymbol);
+                        actionTable[i][tIdx].action = 's';
+                        actionTable[i][tIdx].number = index;
+                    }
+                } else if (isNonTerminal(nextSymbol)) {
+                    State nextState = gotoState(&states[i], nextSymbol);
+                    int index;
+                    if (stateExists(&nextState, &index)) {
+                        int ntIdx = getNonTerminalIndex(nextSymbol);
+                        gotoTable[i][ntIdx] = index;
+                    }
+                }
+            } else {
+                if (item.prodNum == 0) {
+                    int tIdx = getTerminalIndex('$');
+                    actionTable[i][tIdx].action = 'a';
+                } else {
+                    int lhsIdx = getNonTerminalIndex(productions[item.prodNum].lhs);
+                    for (int k = 0; k < followCount[lhsIdx]; k++) {
+                        int tIdx = getTerminalIndex(followSets[lhsIdx][k]);
+                        if (tIdx != -1) {
+                            actionTable[i][tIdx].action = 'r';
+                            actionTable[i][tIdx].number = item.prodNum;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void printGrammar() {
+    for (int i = 0; i < prodCount; i++) {
+        printf("%d. ", i);
+        printProduction(i);
+    }
+}
+
+void printProduction(int prodNum) {
+    printf("%c -> %s\n", productions[prodNum].lhs, productions[prodNum].rhs);
+}
+
+void printItem(Item item) {
+    printf("%c -> ", productions[item.prodNum].lhs);
+    char *rhs = productions[item.prodNum].rhs;
+    for (int i = 0; i <= strlen(rhs); i++) {
+        if (i == item.dotPos) printf(".");
+        if (i < strlen(rhs)) printf("%c", rhs[i]);
+    }
+}
+
+void printStates() {
+    for (int i = 0; i < stateCount; i++) {
+        printf("\nState I%d:\n", i);
+        for (int j = 0; j < states[i].itemCount; j++) {
+            printf("  ");
+            printItem(states[i].items[j]);
+            printf("\n");
+        }
+    }
+}
+
+void printParsingTable() {
+    printf("\n========================================\n");
+    printf("          SLR PARSING TABLE\n");
+    printf("========================================\n\n");
+    
+    printf("%-8s", "State");
+    printf("%-15s", "ACTION");
+    for (int i = 0; i < tCount; i++) {
+        printf("%-8c", terminals[i]);
+    }
+    printf("%-15s", "GOTO");
+    for (int i = 1; i < ntCount; i++) {
+        printf("%-8c", nonTerminals[i]);
+    }
+    printf("\n");
+    
+    for (int i = 0; i < 80; i++) printf("-");
+    printf("\n");
+    
+    for (int i = 0; i < stateCount; i++) {
+        printf("%-8d", i);
+        printf("%-15s", "");
+        
+        for (int j = 0; j < tCount; j++) {
+            int tIdx = getTerminalIndex(terminals[j]);
+            if (actionTable[i][tIdx].action == 's') {
+                printf("s%-7d", actionTable[i][tIdx].number);
+            } else if (actionTable[i][tIdx].action == 'r') {
+                printf("r%-7d", actionTable[i][tIdx].number);
+            } else if (actionTable[i][tIdx].action == 'a') {
+                printf("%-8s", "acc");
+            } else {
+                printf("%-8s", "-");
+            }
+        }
+        
+        printf("%-15s", "");
+        
+        for (int j = 1; j < ntCount; j++) {
+            int ntIdx = getNonTerminalIndex(nonTerminals[j]);
+            if (gotoTable[i][ntIdx] != -1) {
+                printf("%-8d", gotoTable[i][ntIdx]);
+            } else {
+                printf("%-8s", "-");
+            }
+        }
+        printf("\n");
+    }
+}
+
+void initStack(Stack *s) {
+    s->top = -1;
+    push(s, 0, '$');
+}
+
+void push(Stack *s, int state, char symbol) {
+    s->top++;
+    s->state[s->top] = state;
+    s->symbol[s->top] = symbol;
+}
+
+void pop(Stack *s, int count) {
+    s->top -= count;
+}
+
+int getTerminalIndex(char c) {
+    for (int i = 0; i < tCount; i++) {
+        if (terminals[i] == c) return i;
+    }
+    return -1;
+}
+
+int getNonTerminalIndex(char c) {
+    for (int i = 0; i < ntCount; i++) {
+        if (nonTerminals[i] == c) return i;
+    }
+    return -1;
+}
+
+bool isTerminal(char c) {
+    return !isupper(c) && c != '@';
+}
+
+bool isNonTerminal(char c) {
+    return isupper(c) || c == '\'';
+}
+
+bool parseInput(char *input) {
+    Stack stack;
+    initStack(&stack);
+    int inputPos = 0;
+    int step = 1;
+    
+    printf("%-6s %-20s %-20s %-20s\n", "Step", "Stack", "Input", "Action");
+    printf("----------------------------------------------------------------\n");
+    
+    while (true) {
+        int currentState = stack.state[stack.top];
+        char currentInput = input[inputPos];
+        int tIdx = getTerminalIndex(currentInput);
+        
+        if (tIdx == -1) {
+            printf("Error: Invalid input symbol '%c'\n", currentInput);
+            return false;
+        }
+        
+        Action action = actionTable[currentState][tIdx];
+        
+        // Print current step
+        printf("%-6d ", step++);
+        for (int i = 0; i <= stack.top; i++) {
+            printf("%c", stack.symbol[i]);
+        }
+        printf("%-20s", "");
+        printf("%-20s", input + inputPos);
+        
+        if (action.action == 's') {
+            printf("Shift %d\n", action.number);
+            push(&stack, action.number, currentInput);
+            inputPos++;
+        } else if (action.action == 'r') {
+            printf("Reduce by production %d\n", action.number);
+            int prodLen = productions[action.number].rhsLen;
+            pop(&stack, prodLen);
+            
+            char lhs = productions[action.number].lhs;
+            int topState = stack.state[stack.top];
+            int ntIdx = getNonTerminalIndex(lhs);
+            int gotoSt = gotoTable[topState][ntIdx];
+            
+            if (gotoSt == -1) {
+                printf("Error: No goto entry\n");
+                return false;
+            }
+            
+            push(&stack, gotoSt, lhs);
+        } else if (action.action == 'a') {
+            printf("Accept\n");
+            return true;
+        } else {
+            printf("Error\n");
+            return false;
+        }
+    }
+}
+
+void printStep(int step, Stack *s, char *input, int inputPos, char *action) {
+    printf("%-6d ", step);
+    for (int i = 0; i <= s->top; i++) {
+        printf("%d", s->state[i]);
+    }
+    printf(" | ");
+    for (int i = 0; i <= s->top; i++) {
+        printf("%c", s->symbol[i]);
+    }
+    printf(" | %s | %s\n", input + inputPos, action);
+}
+
+TAC, QUADRUPLES AND TRIPLES FOR OPERATIONS ONLY
+
+#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+
+#define MAX 100
+
+char stack[MAX];
+int top = -1;
+int tempCount = 1;
+
+// Quadruple structure
+typedef struct {
+    char op;
+    char arg1[5];
+    char arg2[5];
+    char result[5];
+} Quad;
+
+// Triple structure
+typedef struct {
+    char op;
+    char arg1[5];
+    char arg2[5];
+} Triple;
+
+Quad quadList[50];
+Triple tripleList[50];
+int quadIndex = 0;
+int tripleIndex = 0;
+
+void push(char c) { stack[++top] = c; }
+char pop() { return (top==-1) ? '\0' : stack[top--]; }
+char peek() { return (top==-1) ? '\0' : stack[top]; }
+int precedence(char c) {
+    if(c=='+'||c=='-') return 1;
+    if(c=='*'||c=='/') return 2;
+    return 0;
+}
+
+// Convert infix to postfix
+void infixToPostfix(char* expr, char* postfix) {
+    int j=0;
+    for(int i=0; expr[i]; i++) {
+        if(isalpha(expr[i])) {
+            postfix[j++] = expr[i];
+        } else if(expr[i]=='(') {
+            push('(');
+        } else if(expr[i]==')') {
+            while(top!=-1 && peek()!='(')
+                postfix[j++] = pop();
+            pop(); // remove '('
+        } else { // operator
+            while(top!=-1 && precedence(peek())>=precedence(expr[i]))
+                postfix[j++] = pop();
+            push(expr[i]);
+        }
+    }
+    while(top!=-1)
+        postfix[j++] = pop();
+    postfix[j] = '\0';
+}
+
+// Generate TAC, Quadruple, and Triple
+void generateTACandTables(char* postfix, char* lhs) {
+    char stackOperands[50][5];
+    int opTop=-1;
+
+    for(int i=0; postfix[i]; i++) {
+        if(isalpha(postfix[i])) {
+            sprintf(stackOperands[++opTop], "%c", postfix[i]);
+        } else { // operator
+            char op2[5], op1[5], temp[5];
+            strcpy(op2, stackOperands[opTop--]);
+            strcpy(op1, stackOperands[opTop--]);
+            sprintf(temp, "t%d", tempCount++);
+
+            // TAC
+            printf("%s = %s %c %s\n", temp, op1, postfix[i], op2);
+
+            // Quadruple
+            quadList[quadIndex].op = postfix[i];
+            strcpy(quadList[quadIndex].arg1, op1);
+            strcpy(quadList[quadIndex].arg2, op2);
+            strcpy(quadList[quadIndex].result, temp);
+            quadIndex++;
+
+            // Triple
+            tripleList[tripleIndex].op = postfix[i];
+            strcpy(tripleList[tripleIndex].arg1, op1);
+            strcpy(tripleList[tripleIndex].arg2, op2);
+            tripleIndex++;
+
+            strcpy(stackOperands[++opTop], temp);
+        }
+    }
+
+    // Final assignment to LHS
+    printf("%s = %s\n\n", lhs, stackOperands[opTop]);
+}
+
+void printQuadruples() {
+    printf("Quadruples Table:\n");
+    printf("Result\tArg1\tOp\tArg2\n");
+    for(int i=0;i<quadIndex;i++)
+        printf("%s\t%s\t%c\t%s\n", quadList[i].result, quadList[i].arg1, quadList[i].op, quadList[i].arg2);
+    printf("\n");
+}
+
+void printTriples() {
+    printf("Triples Table:\n");
+    printf("Index\tOp\tArg1\tArg2\n");
+    for(int i=0;i<tripleIndex;i++)
+        printf("%d\t%c\t%s\t%s\n", i, tripleList[i].op, tripleList[i].arg1, tripleList[i].arg2);
+    printf("\n");
+}
+
+int main() {
+    char code[100], postfix[100];
+    printf("Enter arithmetic statement (e.g., a=b+c*d): ");
+    scanf("%s", code);
+
+    char *eq = strchr(code,'=');
+    if(eq) {
+        char lhs[10];
+        strncpy(lhs, code, eq-code);
+        lhs[eq-code] = '\0';
+        char *rhs = eq+1;
+
+        infixToPostfix(rhs, postfix);
+        generateTACandTables(postfix, lhs);
+        printQuadruples();
+        printTriples();
+    } else {
+        printf("Invalid statement.\n");
+    }
+
+    return 0;
+}
+
+NFA TO DFA
+
+#include <stdio.h>
+#include <string.h>
+
+#define MAX_STATES 10
+#define MAX_SYMBOLS 10
+#define MAX_DFA_STATES 100
+
+int nfa[MAX_STATES][MAX_SYMBOLS][MAX_STATES];
+int nfa_states, nfa_symbols;
+
+typedef struct {
+    int states[MAX_STATES];
+    int count;
+} StateSet;
+
+StateSet dfa[MAX_DFA_STATES];
+int dfa_count = 0;
+int dfa_transitions[MAX_DFA_STATES][MAX_SYMBOLS];
+
+int is_in_dfa(StateSet s) {
+    for (int i = 0; i < dfa_count; i++) {
+        if (dfa[i].count == s.count) {
+            int same = 1;
+            for (int j = 0; j < s.count; j++)
+                if (dfa[i].states[j] != s.states[j])
+                    same = 0;
+            if (same) return i;
+        }
+    }
+    return -1;
+}
+
+StateSet union_set(StateSet s1, StateSet s2) {
+    StateSet result = s1;
+    for (int i = 0; i < s2.count; i++) {
+        int found = 0;
+        for (int j = 0; j < result.count; j++)
+            if (s2.states[i] == result.states[j]) {
+                found = 1;
+                break;
+            }
+        if (!found) {
+            result.states[result.count++] = s2.states[i];
+        }
+    }
+    return result;
+}
+
+StateSet move(StateSet s, int symbol) {
+    StateSet result;
+    result.count = 0;
+    for (int i = 0; i < s.count; i++) {
+        int from = s.states[i];
+        for (int j = 0; j < nfa_states; j++) {
+            if (nfa[from][symbol][j]) {
+                int found = 0;
+                for (int k = 0; k < result.count; k++)
+                    if (result.states[k] == j) found = 1;
+                if (!found) result.states[result.count++] = j;
+            }
+        }
+    }
+    return result;
+}
+
+int main() {
+    printf("Enter number of NFA states: ");
+    scanf("%d", &nfa_states);
+    printf("Enter number of input symbols: ");
+    scanf("%d", &nfa_symbols);
+
+    memset(nfa, 0, sizeof(nfa));
+
+    printf("Enter NFA transition table (1 if transition exists, 0 otherwise):\n");
+    for (int i = 0; i < nfa_states; i++) {
+        for (int j = 0; j < nfa_symbols; j++) {
+            printf("State %d, Symbol %d: ", i, j);
+            for (int k = 0; k < nfa_states; k++) {
+                scanf("%d", &nfa[i][j][k]);
+            }
+        }
+    }
+
+    // Initialize DFA with start state
+    dfa[0].count = 1;
+    dfa[0].states[0] = 0;
+    dfa_count = 1;
+
+    for (int i = 0; i < dfa_count; i++) {
+        for (int j = 0; j < nfa_symbols; j++) {
+            StateSet new_set = move(dfa[i], j);
+            int idx = is_in_dfa(new_set);
+            if (idx == -1 && new_set.count > 0) {
+                dfa[dfa_count] = new_set;
+                dfa_transitions[i][j] = dfa_count;
+                dfa_count++;
+            } else {
+                dfa_transitions[i][j] = idx;
+            }
+        }
+    }
+
+    // Print DFA transition table
+    printf("\nDFA Transition Table:\n");
+    for (int i = 0; i < dfa_count; i++) {
+        printf("DFA state %d: {", i);
+        for (int k = 0; k < dfa[i].count; k++) {
+            printf("%d", dfa[i].states[k]);
+            if (k != dfa[i].count - 1) printf(",");
+        }
+        printf("} -> ");
+        for (int j = 0; j < nfa_symbols; j++) {
+            if (dfa_transitions[i][j] != -1)
+                printf("Symbol %d: %d  ", j, dfa_transitions[i][j]);
+        }
+        printf("\n");
+    }
+
+    return 0;
+}
+
+EXAMPLE INPUT 
+Enter number of NFA states: 3
+Enter number of input symbols: 2
+Enter NFA transition table (1 if transition exists, 0 otherwise):
+State 0, Symbol 0: 1 1 0
+State 0, Symbol 1: 1 0 0
+State 1, Symbol 0: 0 0 0
+State 1, Symbol 1: 0 0 1
+State 2, Symbol 0: 0 0 0
+State 2, Symbol 1: 0 0 0
+
+
+OPERATOR PRECEDENCE
+
+#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+
+#define MAX 20
+#define MAX_PROD 20
+#define MAX_TERMINALS 20
+
+char nonTerminals[MAX];
+int nNonTerminals = 0;
+
+char terminals[MAX_TERMINALS];
+int nTerminals = 0;
+
+char productions[MAX_PROD][MAX];
+int nProductions = 0;
+
+int firstVT[MAX_PROD][MAX_TERMINALS];  // firstVT sets
+int lastVT[MAX_PROD][MAX_TERMINALS];   // lastVT sets
+
+char precedenceTable[MAX_TERMINALS][MAX_TERMINALS];
+
+int indexOf(char arr[], int n, char c) {
+    for (int i=0;i<n;i++)
+        if (arr[i]==c) return i;
+    return -1;
+}
+
+int isTerminal(char c) {
+    return indexOf(terminals, nTerminals, c) != -1;
+}
+
+void addTerminal(char c) {
+    if (indexOf(terminals, nTerminals, c) == -1)
+        terminals[nTerminals++] = c;
+}
+
+void inputGrammar() {
+    printf("Enter number of productions: ");
+    scanf("%d", &nProductions);
+    getchar();
+    printf("Enter productions (e.g., E->E+T):\n");
+    for (int i=0;i<nProductions;i++) {
+        fgets(productions[i], MAX, stdin);
+        productions[i][strcspn(productions[i], "\n")] = 0;
+        if (indexOf(nonTerminals, nNonTerminals, productions[i][0]) == -1)
+            nonTerminals[nNonTerminals++] = productions[i][0];
+        for (int j=3; productions[i][j]!='\0'; j++)
+            if (!isupper(productions[i][j]) && productions[i][j]!='|')
+                addTerminal(productions[i][j]);
+    }
+}
+
+void initTable() {
+    for (int i=0;i<nTerminals;i++)
+        for (int j=0;j<nTerminals;j++)
+            precedenceTable[i][j] = ' ';
+}
+
+// Simplified: firstVT & lastVT calculation (direct terminal after/before non-terminal)
+void calculatePrecedenceTable() {
+    for (int p=0;p<nProductions;p++) {
+        char *rhs = productions[p]+3;
+        int len = strlen(rhs);
+        for (int i=0;i<len;i++) {
+            if (isTerminal(rhs[i])) {
+                if (i+1<len && isTerminal(rhs[i+1])) {
+                    int row = indexOf(terminals, nTerminals, rhs[i]);
+                    int col = indexOf(terminals, nTerminals, rhs[i+1]);
+                    precedenceTable[row][col] = '=';
+                }
+            }
+            if (isTerminal(rhs[i]) && i+1<len && isupper(rhs[i+1])) {
+                for (int t=0;t<nTerminals;t++)
+                    precedenceTable[indexOf(terminals, nTerminals, rhs[i])][t] = '<';
+            }
+            if (isupper(rhs[i]) && i+1<len && isTerminal(rhs[i+1])) {
+                precedenceTable[indexOf(terminals, nTerminals, rhs[i+1])][indexOf(terminals, nTerminals, rhs[i])] = '>';
+            }
+        }
+    }
+}
+
+void printTable() {
+    printf("\nOperator Precedence Table:\n   ");
+    for (int i=0;i<nTerminals;i++)
+        printf("%c ", terminals[i]);
+    printf("\n");
+    for (int i=0;i<nTerminals;i++) {
+        printf("%c  ", terminals[i]);
+        for (int j=0;j<nTerminals;j++)
+            printf("%c ", precedenceTable[i][j]);
+        printf("\n");
+    }
+}
+
+int main() {
+    inputGrammar();
+    initTable();
+    calculatePrecedenceTable();
+    printTable();
+
+    char input[50];
+    printf("\nEnter input string ending with $: ");
+    scanf("%s", input);
+
+    // Parsing logic: simplified shift/reduce based on precedence table
+    char stack[50] = "$";
+    int top = 0;
+    int i = 0;
+    printf("\nStack\tInput\tAction\n");
+    while (!(stack[top]=='$' && input[i]=='$')) {
+        char a = input[i];
+        char s = stack[top];
+        int row = indexOf(terminals, nTerminals, s);
+        int col = indexOf(terminals, nTerminals, a);
+        if (precedenceTable[row][col]=='<' || precedenceTable[row][col]=='=') {
+            stack[++top] = a;
+            printf("%s\t%s\tShift %c\n", stack, &input[i], a);
+            i++;
+        } else if (precedenceTable[row][col]=='>') {
+            printf("%s\t%s\tReduce %c\n", stack, &input[i], stack[top]);
+            top--;
+        } else {
+            printf("Error: No precedence defined for %c and %c\n", s, a);
+            break;
+        }
+    }
+    printf("Parsing completed.\n");
+    return 0;
+}
+
+
+
+YACC code for Email Verification
+
+
+%{
+    #include <stdio.h>
+    #include <string.h>
+    int valid = 0;
+%}
+/* Rules Section */
+%%
+[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,} {
+    valid = 1;
+}
+"\n" {
+    if (valid)
+        printf("\nValid email ID\n");
+    else
+        printf("\nInvalid email ID\n");
+    valid = 0;
+}
+%%
+int yywrap(void) {}
+int main() {
+    printf("Enter an email ID to check validity:\n");
+    yylex();
+    return 0;
+}
+
+YACC code for Calculator
+
+%{
+    #include <stdio.h>
+    #include <stdlib.h>
+    int op = 0, i;
+    float a, b;
+    int digi();
+%}
+dig [0-9]+|([0-9]*)"."([0-9]+)
+add "+"
+sub "-"
+mul "*"
+div "/"
+pow "^"
+ln \n
+%%
+{dig} {digi();}
+{add} {op=1;}
+{sub} {op=2;}
+{mul} {op=3;}
+{div} {op=4;}
+{pow} {op=5;}
+{ln} {printf("\nThe Answer : %f\n\n", a);}
+%%
+int digi() {
+    if(op == 0) 
+        a = atof(yytext);
+    else {
+        b = atof(yytext);
+        switch(op) {
+            case 1: a = a + b; break;
+            case 2: a = a - b; break;
+            case 3: a = a * b; break;
+            case 4: a = a / b; break;
+            case 5: for(i = a; b > 1; b--) a = a * i; break;
+        }
+        op = 0;
+    }
+}
+int main() {
+    yylex();
+    return 0;
+}
+int yywrap() {
+    return 1;
+}
+
+YACC code for Loop Construct
+
+%{
+    #include <stdio.h>
+    #include <string.h>
+%}
+/* Rules Section */
+%%
+"for"[ \t]*"(" { printf("FOR loop at line %d\n", yylineno); }
+"while"[ \t]*"(" { printf("WHILE loop at line %d\n", yylineno); }
+"do"[ \t]*"{" { printf("DO-WHILE loop at line %d\n", yylineno); }
+[a-zA-Z_][a-zA-Z0-9_]* ; /* Skip identifiers */
+[ \t\n] ; /* Skip whitespace */
+; /* Skip other characters */
+%%
+int yywrap() {
+    return 1;
+}
+int main() {
+    yylex();
+    return 0;
+}
+
+YACC code for Flow Control
+
+%{
+    #include <stdio.h>
+%}
+/* Rules Section */
+%%
+"if"[ \t]*"(" { printf("IF statement at line %d\n", yylineno); }
+"else if"[ \t]*"(" | "elif"[ \t]*"(" { printf("ELSE IF statement at line %d\n", yylineno); }
+"else"[ \t]*"{" { printf("ELSE statement at line %d\n", yylineno); }
+"switch"[ \t]*"(" { printf("SWITCH statement at line %d\n", yylineno); }
+"case"[ \t] { printf("CASE statement at line %d\n", yylineno); }
+[a-zA-Z_][a-zA-Z0-9_]* ; /* Skip identifiers */
+[ \t] ; /* Skip whitespace */
+\n { yylineno++; } /* Increment line number on newline */
+; /* Skip other characters */
+%%
+int yywrap() {
+    return 1;
+}
+int main() {
+    yylex();
+    return 0;
+}
