@@ -1,3 +1,471 @@
+RE TO DFA DIRECT
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+
+#define MAX_STATES 100
+#define MAX_SYMBOLS 26
+#define MAX_POSITIONS 100
+#define MAX_STACK 100
+
+// Structure for position set
+typedef struct {
+    int pos[MAX_POSITIONS];
+    int size;
+} PosSet;
+
+// Structure for syntax tree node
+typedef struct Node {
+    char symbol;
+    int nullable;
+    PosSet firstpos;
+    PosSet lastpos;
+    int position;
+    struct Node *left;
+    struct Node *right;
+} Node;
+
+// Structure for followpos table
+PosSet followpos[MAX_POSITIONS];
+
+// Structure for DFA state
+typedef struct {
+    PosSet positions;
+    int transitions[MAX_SYMBOLS];
+    int is_final;
+} DFAState;
+
+DFAState dfa[MAX_STATES];
+int num_states = 0;
+int position_counter = 1;
+char position_symbols[MAX_POSITIONS];
+
+// Function prototypes
+Node* createNode(char symbol);
+void addToSet(PosSet *set, int pos);
+int isInSet(PosSet *set, int pos);
+void unionSets(PosSet *result, PosSet *set1, PosSet *set2);
+int setsEqual(PosSet *set1, PosSet *set2);
+void copySet(PosSet *dest, PosSet *src);
+void printSet(PosSet *set);
+Node* parseRegex(char *regex);
+void augmentRegex(char *regex, char *augmented);
+void calculateNullable(Node *node);
+void calculateFirstpos(Node *node);
+void calculateLastpos(Node *node);
+void calculateFollowpos(Node *node);
+void buildDFA(Node *root);
+void printSyntaxTree(Node *node, int level);
+void printFollowposTable();
+void printDFA();
+
+// Create a new node
+Node* createNode(char symbol) {
+    Node *node = (Node*)malloc(sizeof(Node));
+    node->symbol = symbol;
+    node->nullable = 0;
+    node->firstpos.size = 0;
+    node->lastpos.size = 0;
+    node->position = 0;
+    node->left = NULL;
+    node->right = NULL;
+    return node;
+}
+
+// Add position to set
+void addToSet(PosSet *set, int pos) {
+    if (!isInSet(set, pos) && set->size < MAX_POSITIONS) {
+        set->pos[set->size++] = pos;
+    }
+}
+
+// Check if position is in set
+int isInSet(PosSet *set, int pos) {
+    for (int i = 0; i < set->size; i++) {
+        if (set->pos[i] == pos) return 1;
+    }
+    return 0;
+}
+
+// Union of two sets
+void unionSets(PosSet *result, PosSet *set1, PosSet *set2) {
+    result->size = 0;
+    for (int i = 0; i < set1->size; i++) {
+        addToSet(result, set1->pos[i]);
+    }
+    for (int i = 0; i < set2->size; i++) {
+        addToSet(result, set2->pos[i]);
+    }
+}
+
+// Check if two sets are equal
+int setsEqual(PosSet *set1, PosSet *set2) {
+    if (set1->size != set2->size) return 0;
+    for (int i = 0; i < set1->size; i++) {
+        if (!isInSet(set2, set1->pos[i])) return 0;
+    }
+    return 1;
+}
+
+// Copy set
+void copySet(PosSet *dest, PosSet *src) {
+    dest->size = src->size;
+    for (int i = 0; i < src->size; i++) {
+        dest->pos[i] = src->pos[i];
+    }
+}
+
+// Print set
+void printSet(PosSet *set) {
+    printf("{");
+    for (int i = 0; i < set->size; i++) {
+        printf("%d", set->pos[i]);
+        if (i < set->size - 1) printf(", ");
+    }
+    printf("}");
+}
+
+// Augment regex with concatenation operator and end marker
+void augmentRegex(char *regex, char *augmented) {
+    int j = 0;
+    for (int i = 0; regex[i] != '\0'; i++) {
+        augmented[j++] = regex[i];
+        
+        // Add concatenation operator '.' between operands
+        if ((isalnum(regex[i]) || regex[i] == ')' || regex[i] == '*') &&
+            (isalnum(regex[i+1]) || regex[i+1] == '(')) {
+            augmented[j++] = '.';
+        }
+    }
+    augmented[j++] = '.';
+    augmented[j++] = '#'; // End marker
+    augmented[j] = '\0';
+}
+
+// Parse regex to syntax tree
+Node* parseRegex(char *regex) {
+    Node *stack[MAX_STACK];
+    char op_stack[MAX_STACK];
+    int stack_top = -1;
+    int op_top = -1;
+    
+    for (int i = 0; regex[i] != '\0'; i++) {
+        char c = regex[i];
+        
+        if (isalnum(c) || c == '#') {
+            Node *node = createNode(c);
+            node->position = position_counter;
+            position_symbols[position_counter] = c;
+            position_counter++;
+            stack[++stack_top] = node;
+        }
+        else if (c == '(') {
+            op_stack[++op_top] = c;
+        }
+        else if (c == ')') {
+            while (op_top >= 0 && op_stack[op_top] != '(') {
+                char op = op_stack[op_top--];
+                Node *node = createNode(op);
+                
+                if (op == '*') {
+                    node->left = stack[stack_top--];
+                } else {
+                    node->right = stack[stack_top--];
+                    node->left = stack[stack_top--];
+                }
+                stack[++stack_top] = node;
+            }
+            op_top--; // Remove '('
+        }
+        else if (c == '*') {
+            Node *node = createNode(c);
+            node->left = stack[stack_top--];
+            stack[++stack_top] = node;
+        }
+        else if (c == '.' || c == '|') {
+            while (op_top >= 0 && op_stack[op_top] != '(' &&
+                   ((c == '|' && op_stack[op_top] != '|') || 
+                    (c == '.' && op_stack[op_top] == '.'))) {
+                char op = op_stack[op_top--];
+                Node *node = createNode(op);
+                node->right = stack[stack_top--];
+                node->left = stack[stack_top--];
+                stack[++stack_top] = node;
+            }
+            op_stack[++op_top] = c;
+        }
+    }
+    
+    while (op_top >= 0) {
+        char op = op_stack[op_top--];
+        Node *node = createNode(op);
+        if (op == '*') {
+            node->left = stack[stack_top--];
+        } else {
+            node->right = stack[stack_top--];
+            node->left = stack[stack_top--];
+        }
+        stack[++stack_top] = node;
+    }
+    
+    return stack[0];
+}
+
+// Calculate nullable
+void calculateNullable(Node *node) {
+    if (!node) return;
+    
+    calculateNullable(node->left);
+    calculateNullable(node->right);
+    
+    if (isalnum(node->symbol) || node->symbol == '#') {
+        node->nullable = 0;
+    }
+    else if (node->symbol == '|') {
+        node->nullable = node->left->nullable || node->right->nullable;
+    }
+    else if (node->symbol == '.') {
+        node->nullable = node->left->nullable && node->right->nullable;
+    }
+    else if (node->symbol == '*') {
+        node->nullable = 1;
+    }
+}
+
+// Calculate firstpos
+void calculateFirstpos(Node *node) {
+    if (!node) return;
+    
+    calculateFirstpos(node->left);
+    calculateFirstpos(node->right);
+    
+    if (isalnum(node->symbol) || node->symbol == '#') {
+        addToSet(&node->firstpos, node->position);
+    }
+    else if (node->symbol == '|') {
+        unionSets(&node->firstpos, &node->left->firstpos, &node->right->firstpos);
+    }
+    else if (node->symbol == '.') {
+        if (node->left->nullable) {
+            unionSets(&node->firstpos, &node->left->firstpos, &node->right->firstpos);
+        } else {
+            copySet(&node->firstpos, &node->left->firstpos);
+        }
+    }
+    else if (node->symbol == '*') {
+        copySet(&node->firstpos, &node->left->firstpos);
+    }
+}
+
+// Calculate lastpos
+void calculateLastpos(Node *node) {
+    if (!node) return;
+    
+    calculateLastpos(node->left);
+    calculateLastpos(node->right);
+    
+    if (isalnum(node->symbol) || node->symbol == '#') {
+        addToSet(&node->lastpos, node->position);
+    }
+    else if (node->symbol == '|') {
+        unionSets(&node->lastpos, &node->left->lastpos, &node->right->lastpos);
+    }
+    else if (node->symbol == '.') {
+        if (node->right->nullable) {
+            unionSets(&node->lastpos, &node->left->lastpos, &node->right->lastpos);
+        } else {
+            copySet(&node->lastpos, &node->right->lastpos);
+        }
+    }
+    else if (node->symbol == '*') {
+        copySet(&node->lastpos, &node->left->lastpos);
+    }
+}
+
+// Calculate followpos
+void calculateFollowpos(Node *node) {
+    if (!node) return;
+    
+    if (node->symbol == '.') {
+        for (int i = 0; i < node->left->lastpos.size; i++) {
+            int pos = node->left->lastpos.pos[i];
+            unionSets(&followpos[pos], &followpos[pos], &node->right->firstpos);
+        }
+    }
+    else if (node->symbol == '*') {
+        for (int i = 0; i < node->lastpos.size; i++) {
+            int pos = node->lastpos.pos[i];
+            unionSets(&followpos[pos], &followpos[pos], &node->firstpos);
+        }
+    }
+    
+    calculateFollowpos(node->left);
+    calculateFollowpos(node->right);
+}
+
+// Build DFA from syntax tree
+void buildDFA(Node *root) {
+    PosSet unmarked[MAX_STATES];
+    int unmarked_count = 0;
+    
+    // Initialize followpos
+    for (int i = 0; i < MAX_POSITIONS; i++) {
+        followpos[i].size = 0;
+    }
+    
+    // Calculate followpos
+    calculateFollowpos(root);
+    
+    // Start state is firstpos of root
+    copySet(&dfa[0].positions, &root->firstpos);
+    copySet(&unmarked[unmarked_count++], &root->firstpos);
+    num_states = 1;
+    
+    // Initialize transitions
+    for (int i = 0; i < MAX_STATES; i++) {
+        for (int j = 0; j < MAX_SYMBOLS; j++) {
+            dfa[i].transitions[j] = -1;
+        }
+        dfa[i].is_final = 0;
+    }
+    
+    // Process unmarked states
+    while (unmarked_count > 0) {
+        PosSet current = unmarked[--unmarked_count];
+        int current_state = -1;
+        
+        // Find current state index
+        for (int i = 0; i < num_states; i++) {
+            if (setsEqual(&dfa[i].positions, &current)) {
+                current_state = i;
+                break;
+            }
+        }
+        
+        // Check if final state (contains position of #)
+        for (int i = 0; i < current.size; i++) {
+            if (position_symbols[current.pos[i]] == '#') {
+                dfa[current_state].is_final = 1;
+                break;
+            }
+        }
+        
+        // For each input symbol
+        for (char a = 'a'; a <= 'z'; a++) {
+            PosSet next;
+            next.size = 0;
+            
+            // Find all positions with symbol a
+            for (int i = 0; i < current.size; i++) {
+                int pos = current.pos[i];
+                if (position_symbols[pos] == a) {
+                    unionSets(&next, &next, &followpos[pos]);
+                }
+            }
+            
+            if (next.size > 0) {
+                // Check if state already exists
+                int next_state = -1;
+                for (int i = 0; i < num_states; i++) {
+                    if (setsEqual(&dfa[i].positions, &next)) {
+                        next_state = i;
+                        break;
+                    }
+                }
+                
+                // Create new state if doesn't exist
+                if (next_state == -1) {
+                    next_state = num_states++;
+                    copySet(&dfa[next_state].positions, &next);
+                    copySet(&unmarked[unmarked_count++], &next);
+                }
+                
+                dfa[current_state].transitions[a - 'a'] = next_state;
+            }
+        }
+    }
+}
+
+// Print syntax tree
+void printSyntaxTree(Node *node, int level) {
+    if (!node) return;
+    
+    for (int i = 0; i < level; i++) printf("  ");
+    printf("Node: %c", node->symbol);
+    if (node->position > 0) printf(" (pos: %d)", node->position);
+    printf(", nullable: %d, firstpos: ", node->nullable);
+    printSet(&node->firstpos);
+    printf(", lastpos: ");
+    printSet(&node->lastpos);
+    printf("\n");
+    
+    printSyntaxTree(node->left, level + 1);
+    printSyntaxTree(node->right, level + 1);
+}
+
+// Print followpos table
+void printFollowposTable() {
+    printf("\nFollowpos Table:\n");
+    printf("Position\tSymbol\tFollowpos\n");
+    printf("--------\t------\t---------\n");
+    for (int i = 1; i < position_counter; i++) {
+        printf("%d\t\t%c\t", i, position_symbols[i]);
+        printSet(&followpos[i]);
+        printf("\n");
+    }
+}
+
+// Print DFA
+void printDFA() {
+    printf("\nDFA States:\n");
+    for (int i = 0; i < num_states; i++) {
+        printf("State %d: ", i);
+        printSet(&dfa[i].positions);
+        if (dfa[i].is_final) printf(" [FINAL]");
+        printf("\n");
+        
+        printf("  Transitions:\n");
+        for (int j = 0; j < MAX_SYMBOLS; j++) {
+            if (dfa[i].transitions[j] != -1) {
+                printf("    %c -> State %d\n", 'a' + j, dfa[i].transitions[j]);
+            }
+        }
+    }
+}
+
+int main() {
+    char regex[100], augmented[200];
+    
+    printf("Enter regular expression (use * for Kleene star, | for OR, () for grouping):\n");
+    printf("Example: (a|b)*abb\n");
+    scanf("%s", regex);
+    
+    // Augment regex
+    augmentRegex(regex, augmented);
+    printf("\nAugmented regex: %s\n", augmented);
+    
+    // Parse to syntax tree
+    Node *root = parseRegex(augmented);
+    
+    // Calculate nullable, firstpos, lastpos
+    calculateNullable(root);
+    calculateFirstpos(root);
+    calculateLastpos(root);
+    
+    printf("\n=== Syntax Tree ===\n");
+    printSyntaxTree(root, 0);
+    
+    // Build DFA
+    buildDFA(root);
+    
+    printFollowposTable();
+    printDFA();
+    
+    return 0;
+}
+
+
 LEX - BASIC
 
 %{
@@ -2997,149 +3465,3 @@ int main() {
 }
 
 
-        }
-    }
-    printf("Parsing completed.\n");
-    return 0;
-}
-
-
-
-
-YACC code for Email Verification
-
-%{
-    #include <stdio.h>
-    #include <string.h>
-    int valid = 0;
-%}
-
-
-%%
-[abc]+ -> Choose from a,b,c
-(abc) -> Choose abc
-
-
-
-
-[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,} {valid = 1;}
-\n {
-    if (valid)
-        printf("\nValid email ID\n");
-    else
-        printf("\nInvalid email ID\n");
-    valid = 0;
-}
-%%
-
-
-int yywrap(void) {}
-int main() {
-    printf("Enter an email ID to check validity:\n");
-    yylex();
-    return 0;
-}
-
-
-YACC code for Calculator
-
-
-%{
-    #include <stdio.h>
-    #include <stdlib.h>
-    int op = 0, i;
-    float a, b;
-    int digi();
-%}
-dig [0-9]+|([0-9]*)"."([0-9]+)
-add "+"
-sub "-"
-mul "*"
-div "/"
-pow "^"
-ln \n
-%%
-{dig} {digi();}
-{add} {op=1;}
-{sub} {op=2;}
-{mul} {op=3;}
-{div} {op=4;}
-{pow} {op=5;}
-{ln} {printf("\nThe Answer : %f\n\n", a);}
-%%
-
-
-int digi() {
-    if(op == 0) 
-        a = atof(yytext);
-    else {
-        b = atof(yytext);
-        switch(op) {
-            case 1: a = a + b; break;
-            case 2: a = a - b; break;
-            case 3: a = a * b; break;
-            case 4: a = a / b; break;
-            case 5: for(i = a; b > 1; b--) a = a * i; break;
-        }
-        op = 0;
-    }
-}
-int main() {
-    yylex();
-    return 0;
-}
-int yywrap() {
-    return 1;
-}
-
-
-YACC code for Loop Construct
-
-
-%{
-    #include <stdio.h>
-    #include <string.h>
-%}
-/* Rules Section */
-%%
-"for"[ \t]*"(" { printf("FOR loop at line %d\n", yylineno); }
-"while"[ \t]*"(" { printf("WHILE loop at line %d\n", yylineno); }
-"do"[ \t]*"{" { printf("DO-WHILE loop at line %d\n", yylineno); }
-[a-zA-Z_][a-zA-Z0-9_]* ; /* Skip identifiers */
-[ \t\n] ; /* Skip whitespace */
-; /* Skip other characters */
-%%
-int yywrap() {
-    return 1;
-}
-int main() {
-    yylex();
-    return 0;
-}
-
-
-YACC code for Flow Control
-
-
-%{
-    #include <stdio.h>
-%}
-/* Rules Section */
-%%
-"if"[ \t]*"(" { printf("IF statement at line %d\n", yylineno); }
-"else if"[ \t]*"(" | "elif"[ \t]*"(" { printf("ELSE IF statement at line %d\n", yylineno); }
-"else"[ \t]*"{" { printf("ELSE statement at line %d\n", yylineno); }
-"switch"[ \t]*"(" { printf("SWITCH statement at line %d\n", yylineno); }
-"case"[ \t] { printf("CASE statement at line %d\n", yylineno); }
-[a-zA-Z_][a-zA-Z0-9_]* ; /* Skip identifiers */
-[ \t] ; /* Skip whitespace */
-\n { yylineno++; } /* Increment line number on newline */
-; /* Skip other characters */
-%%
-int yywrap() {
-    return 1;
-}
-int main() {
-    yylex();
-    return 0;
-}
