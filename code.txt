@@ -1,469 +1,527 @@
-RE TO NFA with string validity
+LEX - BASIC
 
+%{
+#include <stdio.h>
+%}
+
+%%
+^a*b*a$      { printf("Valid string: %s\n", yytext); }
+.|\n         { printf("Invalid string: %s\n", yytext); }
+%%
+
+int main()
+{
+    printf("Enter a string: ");
+    yylex();
+    return 0;
+}
+
+int yywrap()
+{
+    return 1;
+}
+
+
+
+RUN CODE : FLEX FILENAME.L -> gcc lex.yy.c -> ./a.out
+
+
+
+LEX - READING FILE
+
+%{
 #include <stdio.h>
 #include <string.h>
-#include <stdbool.h>
-#include <stdlib.h>
 
-#define MAX_STATES 50
-#define MAX_TRANS 100
+int isKeyword(char *word);
+
+%}
+
+%%
+"#".*                              { printf("Preprocessor Directive\t%s\n", yytext); }
+\"([^\\\"]|\\.)*\"                 { printf("String Literal\t\t%s\n", yytext); }
+[0-9]+                             { printf("Constant\t\t\t%s\n", yytext); }
+"=="|"!="|"<="|">="|"="|"*"|"%"    { printf("Operator\t\t\t%s\n", yytext); }
+"(" | ")" | "{" | "}" | ";" | "," | "#" | "<" | ">" 
+                                   { printf("Symbol/Separator\t\t%s\n", yytext); }
+[a-zA-Z_][a-zA-Z0-9_]*             {
+                                      if(isKeyword(yytext))
+                                          printf("Keyword\t\t\t%s\n", yytext);
+                                      else
+                                          printf("Identifier\t\t%s\n", yytext);
+                                   }
+[ \t\n]+                           { /* ignore whitespace */ }
+.                                  { /* ignore unknown characters */ }
+%%
+
+int isKeyword(char *word)
+{
+    char *keywords[] = {"int","if","else","for","return","break","scanf","printf","while","do","float","char","double","void"};
+    int n = sizeof(keywords)/sizeof(keywords[0]);
+    for(int i=0; i<n; i++)
+        if(strcmp(word, keywords[i]) == 0)
+            return 1;
+    return 0;
+}
+
+int main(int argc, char *argv[])
+{
+    if(argc < 2) {
+        printf("Usage: %s <input_file>\n", argv[0]);
+        return 1;
+    }
+
+    FILE *fp = fopen(argv[1], "r");
+    if(!fp) {
+        printf("Cannot open file: %s\n", argv[1]);
+        return 1;
+    }
+
+    yyin = fp;
+    yylex();
+    fclose(fp);
+    return 0;
+}
+
+int yywrap() { return 1; }
+
+RE TO NFA -> FIND NFA FIRST BY YOURSELF AND THEN USE THIS CODE
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_STATES 10
+#define MAX_TRANS 10
 
 typedef struct {
-    int from, to;
-    char symbol; // 'e' for epsilon
+    char symbol;
+    int to[MAX_TRANS];
+    int to_count;
 } Transition;
 
 typedef struct {
-    int numStates;
-    int startState;
-    int finalStates[MAX_STATES];
-    int numFinal;
-    Transition trans[MAX_TRANS];
-    int numTrans;
-} NFA;
+    int id;
+    Transition transitions[MAX_TRANS];
+    int trans_count;
+    int epsilon[MAX_TRANS];
+    int eps_count;
+} State;
 
 typedef struct {
-    int start, end;
-} NFAFragment;
+    State states[MAX_STATES];
+    int start;
+    int final;
+    int num_states;
+} ENFA;
 
-int stateCount = 0;
-
-// Add transition
-void addTrans(NFA *nfa, int from, int to, char symbol) {
-    nfa->trans[nfa->numTrans].from = from;
-    nfa->trans[nfa->numTrans].to = to;
-    nfa->trans[nfa->numTrans].symbol = symbol;
-    nfa->numTrans++;
-}
-
-// Print NFA transitions
-void printNFA(NFA *nfa) {
-    printf("\n========== NFA STRUCTURE ==========\n");
-    printf("Total States: %d\n", nfa->numStates);
-    printf("Start State: q%d\n", nfa->startState);
-    printf("Final State(s): ");
-    for (int i = 0; i < nfa->numFinal; i++) {
-        printf("q%d ", nfa->finalStates[i]);
+void init_enfa(ENFA* e) {
+    e->num_states = 8;
+    e->start = 0;
+    e->final = 7;
+    for (int i = 0; i < e->num_states; i++) {
+        e->states[i].id = i;
+        e->states[i].trans_count = 0;
+        e->states[i].eps_count = 0;
     }
-    printf("\n\nTransitions:\n");
-    printf("%-10s %-10s %-10s\n", "From", "Symbol", "To");
-    printf("------------------------------------\n");
-    for (int i = 0; i < nfa->numTrans; i++) {
-        printf("q%-9d ", nfa->trans[i].from);
-        if (nfa->trans[i].symbol == 'e') {
-            printf("%-10s ", "ε");
-        } else {
-            printf("%-10c ", nfa->trans[i].symbol);
-        }
-        printf("q%-9d\n", nfa->trans[i].to);
-    }
-    printf("===================================\n\n");
 }
 
-// Create fragment for single character
-NFAFragment charFragment(NFA *nfa, char c) {
-    NFAFragment frag;
-    frag.start = stateCount++;
-    frag.end = stateCount++;
-    addTrans(nfa, frag.start, frag.end, c);
-    return frag;
+void add_transition(ENFA* e, int from, char symbol, int to) {
+    State* s = &e->states[from];
+    s->transitions[s->trans_count].symbol = symbol;
+    s->transitions[s->trans_count].to[s->transitions[s->trans_count].to_count++] = to;
+    s->trans_count++;
 }
 
-// Concatenate two fragments
-NFAFragment concatFragment(NFA *nfa, NFAFragment f1, NFAFragment f2) {
-    addTrans(nfa, f1.end, f2.start, 'e');
-    NFAFragment frag;
-    frag.start = f1.start;
-    frag.end = f2.end;
-    return frag;
+void add_epsilon(ENFA* e, int from, int to) {
+    State* s = &e->states[from];
+    s->epsilon[s->eps_count++] = to;
 }
 
-// Union of two fragments (|)
-NFAFragment unionFragment(NFA *nfa, NFAFragment f1, NFAFragment f2) {
-    NFAFragment frag;
-    frag.start = stateCount++;
-    frag.end = stateCount++;
-    
-    addTrans(nfa, frag.start, f1.start, 'e');
-    addTrans(nfa, frag.start, f2.start, 'e');
-    addTrans(nfa, f1.end, frag.end, 'e');
-    addTrans(nfa, f2.end, frag.end, 'e');
-    
-    return frag;
+int contains(int* arr, int count, int val) {
+    for (int i = 0; i < count; i++)
+        if (arr[i] == val) return 1;
+    return 0;
 }
 
-// Kleene star (*)
-NFAFragment starFragment(NFA *nfa, NFAFragment f) {
-    NFAFragment frag;
-    frag.start = stateCount++;
-    frag.end = stateCount++;
-    
-    addTrans(nfa, frag.start, f.start, 'e');
-    addTrans(nfa, f.end, f.start, 'e');
-    addTrans(nfa, frag.start, frag.end, 'e');
-    addTrans(nfa, f.end, frag.end, 'e');
-    
-    return frag;
-}
+void epsilon_closure(ENFA* e, int* current, int* count) {
+    int queue[MAX_STATES], front = 0, rear = 0;
+    for (int i = 0; i < *count; i++)
+        queue[rear++] = current[i];
 
-// Plus (+)
-NFAFragment plusFragment(NFA *nfa, NFAFragment f) {
-    NFAFragment frag;
-    frag.start = stateCount++;
-    frag.end = stateCount++;
-    
-    addTrans(nfa, frag.start, f.start, 'e');
-    addTrans(nfa, f.end, f.start, 'e');
-    addTrans(nfa, f.end, frag.end, 'e');
-    
-    return frag;
-}
-
-// Build NFA from postfix regex
-NFAFragment buildFromPostfix(NFA *nfa, char *postfix) {
-    NFAFragment stack[50];
-    int top = -1;
-    
-    for (int i = 0; i < strlen(postfix); i++) {
-        char c = postfix[i];
-        
-        if (c >= 'a' && c <= 'z') {
-            stack[++top] = charFragment(nfa, c);
-        } else if (c == '.') { // concat
-            NFAFragment f2 = stack[top--];
-            NFAFragment f1 = stack[top--];
-            stack[++top] = concatFragment(nfa, f1, f2);
-        } else if (c == '|') {
-            NFAFragment f2 = stack[top--];
-            NFAFragment f1 = stack[top--];
-            stack[++top] = unionFragment(nfa, f1, f2);
-        } else if (c == '*') {
-            NFAFragment f = stack[top--];
-            stack[++top] = starFragment(nfa, f);
-        } else if (c == '+') {
-            NFAFragment f = stack[top--];
-            stack[++top] = plusFragment(nfa, f);
-        }
-    }
-    
-    return stack[top];
-}
-
-// Convert infix to postfix
-void infixToPostfix(char *infix, char *postfix) {
-    char stack[100];
-    int top = -1, j = 0;
-    
-    // Add explicit concat operator
-    char temp[200];
-    int k = 0;
-    for (int i = 0; i < strlen(infix); i++) {
-        temp[k++] = infix[i];
-        if ((infix[i] >= 'a' && infix[i] <= 'z') || infix[i] == ')' || infix[i] == '*' || infix[i] == '+') {
-            if (infix[i+1] >= 'a' && infix[i+1] <= 'z' || infix[i+1] == '(') {
-                temp[k++] = '.';
-            }
-        }
-    }
-    temp[k] = '\0';
-    
-    for (int i = 0; i < strlen(temp); i++) {
-        char c = temp[i];
-        
-        if (c >= 'a' && c <= 'z') {
-            postfix[j++] = c;
-        } else if (c == '(') {
-            stack[++top] = c;
-        } else if (c == ')') {
-            while (top >= 0 && stack[top] != '(') {
-                postfix[j++] = stack[top--];
-            }
-            top--; // pop '('
-        } else {
-            int prec = (c == '|') ? 1 : (c == '.') ? 2 : 3; // * and + have highest
-            while (top >= 0 && stack[top] != '(' && 
-                   ((stack[top] == '|') ? 1 : (stack[top] == '.') ? 2 : 3) >= prec) {
-                postfix[j++] = stack[top--];
-            }
-            stack[++top] = c;
-        }
-    }
-    
-    while (top >= 0) {
-        postfix[j++] = stack[top--];
-    }
-    postfix[j] = '\0';
-}
-
-// Build NFA from regex
-void buildNFA(NFA *nfa, char *regex) {
-    stateCount = 0;
-    nfa->numTrans = 0;
-    nfa->numFinal = 0;
-    
-    char postfix[200];
-    infixToPostfix(regex, postfix);
-    
-    NFAFragment frag = buildFromPostfix(nfa, postfix);
-    
-    nfa->startState = frag.start;
-    nfa->finalStates[0] = frag.end;
-    nfa->numFinal = 1;
-    nfa->numStates = stateCount;
-}
-
-// Epsilon closure
-void epsilonClosure(NFA *nfa, int state, bool visited[]) {
-    visited[state] = true;
-    for (int i = 0; i < nfa->numTrans; i++) {
-        if (nfa->trans[i].from == state && nfa->trans[i].symbol == 'e') {
-            if (!visited[nfa->trans[i].to]) {
-                epsilonClosure(nfa, nfa->trans[i].to, visited);
+    while (front < rear) {
+        int s = queue[front++];
+        State* st = &e->states[s];
+        for (int i = 0; i < st->eps_count; i++) {
+            int next = st->epsilon[i];
+            if (!contains(current, *count, next)) {
+                current[(*count)++] = next;
+                queue[rear++] = next;
             }
         }
     }
 }
 
-// Print current states
-void printStates(bool states[], int numStates) {
-    printf("{ ");
-    bool first = true;
-    for (int i = 0; i < numStates; i++) {
-        if (states[i]) {
-            if (!first) printf(", ");
-            printf("q%d", i);
-            first = false;
-        }
-    }
-    printf(" }");
-}
+int accepts(ENFA* e, const char* input) {
+    int current[MAX_STATES], next[MAX_STATES];
+    int curr_count = 1, next_count = 0;
+    current[0] = e->start;
 
-// Move function
-void move(NFA *nfa, bool current[], char symbol, bool next[]) {
-    for (int i = 0; i < MAX_STATES; i++) next[i] = false;
-    
-    for (int i = 0; i < nfa->numStates; i++) {
-        if (current[i]) {
-            for (int j = 0; j < nfa->numTrans; j++) {
-                if (nfa->trans[j].from == i && nfa->trans[j].symbol == symbol) {
-                    next[nfa->trans[j].to] = true;
+    epsilon_closure(e, current, &curr_count);
+
+    for (int i = 0; i < strlen(input); i++) {
+        char c = input[i];
+        next_count = 0;
+
+        for (int j = 0; j < curr_count; j++) {
+            State* s = &e->states[current[j]];
+            for (int t = 0; t < s->trans_count; t++) {
+                if (s->transitions[t].symbol == c) {
+                    for (int k = 0; k < s->transitions[t].to_count; k++) {
+                        int dest = s->transitions[t].to[k];
+                        if (!contains(next, next_count, dest))
+                            next[next_count++] = dest;
+                    }
                 }
             }
         }
+        memcpy(current, next, next_count * sizeof(int));
+        curr_count = next_count;
+        epsilon_closure(e, current, &curr_count);
     }
+
+    return contains(current, curr_count, e->final);
 }
 
-// Check string validity with processing steps
-bool checkString(NFA *nfa, char *str) {
-    bool current[MAX_STATES] = {false};
-    bool next[MAX_STATES] = {false};
-    
-    printf("\n========== STRING PROCESSING ==========\n");
-    
-    epsilonClosure(nfa, nfa->startState, current);
-    printf("Initial state (ε-closure): ");
-    printStates(current, nfa->numStates);
-    printf("\n\n");
-    
-    for (int i = 0; i < strlen(str); i++) {
-        printf("Step %d: Reading '%c'\n", i + 1, str[i]);
-        printf("  Current states: ");
-        printStates(current, nfa->numStates);
-        printf("\n");
-        
-        move(nfa, current, str[i], next);
-        
-        bool temp[MAX_STATES] = {false};
-        for (int j = 0; j < nfa->numStates; j++) {
-            if (next[j]) {
-                epsilonClosure(nfa, j, temp);
+void print_enfa(ENFA* e) {
+    for (int i = 0; i < e->num_states; i++) {
+        State* s = &e->states[i];
+        for (int j = 0; j < s->trans_count; j++) {
+            for (int k = 0; k < s->transitions[j].to_count; k++) {
+                printf("(%d, %c) -> %d\n", i, s->transitions[j].symbol, s->transitions[j].to[k]);
             }
         }
-        memcpy(current, temp, sizeof(current));
-        
-        printf("  After reading '%c' and ε-closure: ", str[i]);
-        printStates(current, nfa->numStates);
-        printf("\n\n");
-    }
-    
-    printf("Final states: ");
-    printStates(current, nfa->numStates);
-    printf("\n");
-    
-    for (int i = 0; i < nfa->numFinal; i++) {
-        if (current[nfa->finalStates[i]]) {
-            printf("Final state q%d is in current states.\n", nfa->finalStates[i]);
-            return true;
+        for (int j = 0; j < s->eps_count; j++) {
+            printf("(%d, ε) -> %d\n", i, s->epsilon[j]);
         }
     }
-    printf("No final state in current states.\n");
-    return false;
+}
+
+void build_enfa(ENFA* e) {
+    init_enfa(e);
+    add_epsilon(e, 0, 1);
+    add_epsilon(e, 7, 1);
+    add_epsilon(e, 1, 2);
+    add_epsilon(e, 2, 3);
+    add_transition(e, 3, '0', 4);
+    add_transition(e, 4, '0', 4);
+    add_epsilon(e, 4, 5);
+    add_epsilon(e, 5, 2);
+    add_epsilon(e, 2, 6);
+    add_transition(e, 6, '1', 7);
 }
 
 int main() {
-    NFA nfa;
-    char regex[100], str[100];
-    
-    printf("Enter regex (use a-z, |, *, +, ()): ");
-    scanf("%s", regex);
-    
-    buildNFA(&nfa, regex);
-    printNFA(&nfa);
-    
+    ENFA e;
+    build_enfa(&e);
+    print_enfa(&e);
+
+    char input[100];
     printf("Enter string to check: ");
-    scanf("%s", str);
-    
-    if (checkString(&nfa, str)) {
-        printf("\n==> String ACCEPTED\n");
-    } else {
-        printf("\n==> String REJECTED\n");
-    }
-    
+    scanf("%s", input);
+
+    if (accepts(&e, input))
+        printf("Accepted\n");
+    else
+        printf("Rejected\n");
+
     return 0;
 }
 
-Operator Precedence Parsing
+INFIX TO POSTFIX
 
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
-#define MAX 20
+#define MAX 100
 
-char grammar[MAX][MAX];
-char precedenceTable[MAX][MAX];
-char terminals[MAX];
-int n, tCount = 0;
+// Stack for operators
+char stack[MAX];
+int top = -1;
 
-// Find position of terminal in table
-int position(char c) {
-    for (int i = 0; i < tCount; i++)
-        if (terminals[i] == c)
-            return i;
-    return -1;
+// Push an element onto the stack
+void push(char c) {
+    if (top == MAX - 1) {
+        printf("Stack Overflow\n");
+        return;
+    }
+    stack[++top] = c;
 }
 
-// Build precedence table manually or automatically
-void createTable() {
-    printf("\nEnter the terminals (no spaces): ");
-    scanf("%s", terminals);
-    tCount = strlen(terminals);
+// Pop an element from the stack
+char pop() {
+    if (top == -1)
+        return '\0';
+    return stack[top--];
+}
 
-    printf("\nEnter operator precedence table (%dx%d):\n", tCount, tCount);
-    printf("Enter relations as <, >, = or . for no relation.\n");
-    for (int i = 0; i < tCount; i++) {
-        for (int j = 0; j < tCount; j++) {
-            printf("Relation between %c and %c: ", terminals[i], terminals[j]);
-            scanf(" %c", &precedenceTable[i][j]);
+// Peek top of stack
+char peek() {
+    if (top == -1)
+        return '\0';
+    return stack[top];
+}
+
+// Define precedence for regex operators
+int precedence(char c) {
+    switch (c) {
+        case '*':
+        case '+':
+        case '?':
+            return 3; // highest precedence
+        case '.':   // explicit concatenation
+            return 2;
+        case '|':
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+// Function to check if character is operator
+int isOperator(char c) {
+    return (c == '*' || c == '|' || c == '.' || c == '+' || c == '?');
+}
+
+// Function to insert explicit concatenation ('.') where needed
+void addConcat(char *re, char *output) {
+    int len = strlen(re);
+    int j = 0;
+    for (int i = 0; i < len; i++) {
+        char c1 = re[i];
+        char c2 = re[i + 1];
+        output[j++] = c1;
+
+        if (c1 != '(' && c2 != ')' && c2 != '|' && !isOperator(c2)) {
+            if (!isOperator(c1))
+                output[j++] = '.';
         }
     }
+    output[j] = '\0';
+}
 
-    printf("\nPrecedence Table:\n   ");
-    for (int i = 0; i < tCount; i++) printf("  %c", terminals[i]);
-    printf("\n");
-    for (int i = 0; i < tCount; i++) {
-        printf(" %c ", terminals[i]);
-        for (int j = 0; j < tCount; j++) {
-            printf("  %c", precedenceTable[i][j]);
+// Convert infix regex to postfix
+void infixToPostfix(char *re, char *postfix) {
+    char temp[MAX];
+    addConcat(re, temp); // add explicit concatenation
+    int k = 0;
+    for (int i = 0; i < strlen(temp); i++) {
+        char c = temp[i];
+        if (c == '(') {
+            push(c);
+        } else if (c == ')') {
+            while (peek() != '(')
+                postfix[k++] = pop();
+            pop(); // remove '('
+        } else if (isOperator(c)) {
+            while (top != -1 && precedence(peek()) >= precedence(c))
+                postfix[k++] = pop();
+            push(c);
+        } else {
+            postfix[k++] = c;
+        }
+    }
+    while (top != -1)
+        postfix[k++] = pop();
+    postfix[k] = '\0';
+}
+
+int main() {
+    char regex[MAX], postfix[MAX];
+
+    printf("Enter Regular Expression (e.g. (a|b)*abb): ");
+    scanf("%s", regex);
+
+    infixToPostfix(regex, postfix);
+
+    printf("Postfix Expression: %s\n", postfix);
+
+    return 0;
+}
+SYMBOL TABLE - MATRIX MULT
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MAX_SYMBOLS 10
+
+typedef struct {
+    char name[10];       // Matrix name (e.g., "A")
+    char type[10];       // "matrix"
+    char datatype[10];   // "int"
+    int rows;
+    int cols;
+    int *address;        // Pointer to dynamically allocated matrix data
+} Symbol;
+
+Symbol symbolTable[MAX_SYMBOLS];
+int symbolCount = 0;
+
+// Insert symbol into symbol table
+void insertSymbol(const char *name, const char *type, const char *datatype,
+                  int rows, int cols, int *address) {
+    if (symbolCount >= MAX_SYMBOLS) {
+        printf("Symbol table full!\n");
+        return;
+    }
+    strcpy(symbolTable[symbolCount].name, name);
+    strcpy(symbolTable[symbolCount].type, type);
+    strcpy(symbolTable[symbolCount].datatype, datatype);
+    symbolTable[symbolCount].rows = rows;
+    symbolTable[symbolCount].cols = cols;
+    symbolTable[symbolCount].address = address;
+    symbolCount++;
+}
+
+// Print symbol table
+void printSymbolTable() {
+    printf("\nSymbol Table:\n");
+    printf("%-8s %-8s %-8s %-6s %-6s %s\n", "Name", "Type", "DataType", "Rows", "Cols", "Address");
+
+    for (int i = 0; i < symbolCount; i++) {
+        printf("%-8s %-8s %-8s %-6d %-6d %p\n",
+               symbolTable[i].name,
+               symbolTable[i].type,
+               symbolTable[i].datatype,
+               symbolTable[i].rows,
+               symbolTable[i].cols,
+               (void *)symbolTable[i].address);
+    }
+}
+
+// Utility function to print a matrix
+void printMatrix(const char *name, int *matrix, int rows, int cols) {
+    printf("%s (%dx%d):\n", name, rows, cols);
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            printf("%d\t", matrix[i * cols + j]);
         }
         printf("\n");
     }
 }
 
-// Get precedence relation between two symbols
-char getRelation(char a, char b) {
-    int i = position(a);
-    int j = position(b);
-    if (i == -1 || j == -1)
-        return '.';
-    return precedenceTable[i][j];
-}
-
 int main() {
-    char input[50], stack[50] = "$";
-    int top = 1;
-    stack[0] = '$';
+    int r1, c1, r2, c2;
 
-    printf("Enter number of grammar rules: ");
-    scanf("%d", &n);
-    printf("Enter the grammar (e.g., E->E+E):\n");
-    for (int i = 0; i < n; i++) {
-        scanf("%s", grammar[i]);
+    printf("Enter number of rows for First Matrix (A): ");
+    scanf("%d", &r1);
+    printf("Enter number of columns for First Matrix (A): ");
+    scanf("%d", &c1);
+    printf("Enter number of rows for Second Matrix (B): ");
+    scanf("%d", &r2);
+    printf("Enter number of columns for Second Matrix (B): ");
+    scanf("%d", &c2);
+
+    if (c1 != r2) {
+        printf("Matrix multiplication not possible (columns of A != rows of B).\n");
+        return 1;
     }
 
-    createTable();
+    // Dynamically allocate memory for matrices as 1D arrays
+    int *A = (int *)malloc(r1 * c1 * sizeof(int));
+    int *B = (int *)malloc(r2 * c2 * sizeof(int));
+    int *C = (int *)malloc(r1 * c2 * sizeof(int));
 
-    printf("\nEnter the input string to parse (end with $): ");
-    scanf("%s", input);
+    if (!A || !B || !C) {
+        printf("Memory allocation failed.\n");
+        return 1;
+    }
 
-    printf("\n--- Operator Precedence Parsing Steps ---\n");
-    int i = 0;
-    char a, b, rel;
+    // Input matrices
+    printf("Enter elements of First Matrix (A):\n");
+    for (int i = 0; i < r1 * c1; i++) {
+        scanf("%d", &A[i]);
+    }
 
-    while (1) {
-        a = stack[top - 1];
-        b = input[i];
-        rel = getRelation(a, b);
+    printf("Enter elements of Second Matrix (B):\n");
+    for (int i = 0; i < r2 * c2; i++) {
+        scanf("%d", &B[i]);
+    }
 
-        if (rel == '<' || rel == '=') {
-            // Shift
-            stack[top++] = b;
-            stack[top] = '\0';
-            i++;
-            printf("Shift: %-10s | Remaining: %s\n", stack, input + i);
-        } else if (rel == '>') {
-            // Reduce
-            top--;
-            printf("Reduce: %-10s | Remaining: %s\n", stack, input + i);
-        } else if (rel == '.' || rel == '\0') {
-            printf("Error: Invalid relation between %c and %c\n", a, b);
-            break;
-        }
+    // Initialize result matrix to zero
+    for (int i = 0; i < r1 * c2; i++) {
+        C[i] = 0;
+    }
 
-        if (stack[top - 1] == '$' && input[i] == '$') {
-            printf("\n✅ String accepted by Operator Precedence Parser!\n");
-            break;
-        }
-
-        if (i >= strlen(input)) {
-            printf("\n❌ String rejected.\n");
-            break;
+    // Perform multiplication
+    for (int i = 0; i < r1; i++) {
+        for (int j = 0; j < c2; j++) {
+            for (int k = 0; k < c1; k++) {
+                C[i * c2 + j] += A[i * c1 + k] * B[k * c2 + j];
+            }
         }
     }
+
+    // Insert matrices into symbol table
+    insertSymbol("A", "matrix", "int", r1, c1, A);
+    insertSymbol("B", "matrix", "int", r2, c2, B);
+    insertSymbol("C", "matrix", "int", r1, c2, C);
+
+    // Print matrices
+    printMatrix("Matrix A", A, r1, c1);
+    printMatrix("Matrix B", B, r2, c2);
+    printMatrix("Matrix C (Result)", C, r1, c2);
+
+    // Print symbol table
+    printSymbolTable();
+
+    // Clean up memory
+    free(A);
+    free(B);
+    free(C);
 
     return 0;
 }
 
 
-LL1 PARSER WIHT FIRST AND FOLLOW and LEFT RECURSION
+PREDICTIVE PARSING
+
 
 #include <stdio.h>
 #include <string.h>
 #include <stdbool.h>
 #include <ctype.h>
 
+
 #define MAX_PROD 50
 #define MAX_SYMBOLS 20
 #define MAX_LEN 50
+
 
 typedef struct {
     char lhs;
     char rhs[MAX_LEN];
 } Production;
 
+
 Production grammar[MAX_PROD];
 int prodCount = 0;
+
 
 char nonTerminals[MAX_SYMBOLS];
 char terminals[MAX_SYMBOLS];
 int ntCount = 0, tCount = 0;
+
 
 char first[MAX_SYMBOLS][MAX_SYMBOLS];
 char follow[MAX_SYMBOLS][MAX_SYMBOLS];
 int firstCount[MAX_SYMBOLS];
 int followCount[MAX_SYMBOLS];
 
+
 char parsingTable[MAX_SYMBOLS][MAX_SYMBOLS][MAX_LEN];
+
 
 // Function prototypes
 void inputGrammar();
@@ -482,6 +540,7 @@ int getNTIndex(char c);
 int getTIndex(char c);
 void addToSet(char set[], int *count, char c);
 bool isInSet(char set[], int count, char c);
+
 
 int main() {
     printf("=== LL(1) Parser Generator ===\n\n");
@@ -511,6 +570,7 @@ int main() {
     return 0;
 }
 
+
 void inputGrammar() {
     printf("Enter number of productions: ");
     scanf("%d", &prodCount);
@@ -530,6 +590,7 @@ void inputGrammar() {
         }
     }
 }
+
 
 void removeLeftRecursion() {
     Production newGrammar[MAX_PROD];
@@ -603,6 +664,7 @@ void removeLeftRecursion() {
     prodCount = newCount;
 }
 
+
 void extractSymbols() {
     ntCount = tCount = 0;
     
@@ -627,6 +689,7 @@ void extractSymbols() {
         terminals[tCount++] = '$';
     }
 }
+
 
 void computeFirst() {
     for (int i = 0; i < ntCount; i++) {
@@ -699,6 +762,7 @@ void computeFirst() {
     }
 }
 
+
 void computeFollow() {
     for (int i = 0; i < ntCount; i++) {
         followCount[i] = 0;
@@ -766,6 +830,7 @@ void computeFollow() {
         }
     }
 }
+
 
 void constructParsingTable() {
     // Initialize table
@@ -840,11 +905,13 @@ void constructParsingTable() {
     }
 }
 
+
 void printGrammar() {
     for (int i = 0; i < prodCount; i++) {
         printf("%c -> %s\n", grammar[i].lhs, grammar[i].rhs);
     }
 }
+
 
 void printFirst() {
     for (int i = 0; i < ntCount; i++) {
@@ -857,6 +924,7 @@ void printFirst() {
     }
 }
 
+
 void printFollow() {
     for (int i = 0; i < ntCount; i++) {
         printf("FOLLOW(%c) = { ", nonTerminals[i]);
@@ -867,6 +935,7 @@ void printFollow() {
         printf(" }\n");
     }
 }
+
 
 void printParsingTable() {
     printf("\n%-8s", "");
@@ -888,13 +957,16 @@ void printParsingTable() {
     }
 }
 
+
 bool isNonTerminal(char c) {
     return isupper(c);
 }
 
+
 bool isTerminal(char c) {
     return (islower(c) || c == '+' || c == '*' || c == '(' || c == ')' || c == '$') && c != '@';
 }
+
 
 int getNTIndex(char c) {
     for (int i = 0; i < ntCount; i++) {
@@ -903,6 +975,7 @@ int getNTIndex(char c) {
     return -1;
 }
 
+
 int getTIndex(char c) {
     for (int i = 0; i < tCount; i++) {
         if (terminals[i] == c) return i;
@@ -910,11 +983,13 @@ int getTIndex(char c) {
     return -1;
 }
 
+
 void addToSet(char set[], int *count, char c) {
     if (!isInSet(set, *count, c)) {
         set[(*count)++] = c;
     }
 }
+
 
 bool isInSet(char set[], int count, char c) {
     for (int i = 0; i < count; i++) {
@@ -923,13 +998,16 @@ bool isInSet(char set[], int count, char c) {
     return false;
 }
 
+
 LR PARSER WITH CONSTRUCTION AND PARSING OF STRING
+
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <ctype.h>
+
 
 #define MAX_STACK 100
 #define MAX_INPUT 100
@@ -938,6 +1016,7 @@ LR PARSER WITH CONSTRUCTION AND PARSING OF STRING
 #define MAX_PROD 20
 #define MAX_ITEMS 50
 
+
 // Grammar Production Structure
 typedef struct {
     char lhs;
@@ -945,17 +1024,20 @@ typedef struct {
     int rhsLen;
 } Production;
 
+
 // LR(0) Item Structure
 typedef struct {
     int prodNum;
     int dotPos;
 } Item;
 
+
 // State (Set of Items) Structure
 typedef struct {
     Item items[MAX_ITEMS];
     int itemCount;
 } State;
+
 
 // Stack Structure
 typedef struct {
@@ -964,11 +1046,13 @@ typedef struct {
     int top;
 } Stack;
 
+
 // Action: s=shift, r=reduce, a=accept, e=error
 typedef struct {
     char action;
     int number;
 } Action;
+
 
 // Global Variables
 Production productions[MAX_PROD];
@@ -978,15 +1062,18 @@ char nonTerminals[MAX_SYMBOLS];
 int tCount = 0, ntCount = 0;
 char startSymbol;
 
+
 Action actionTable[MAX_STATES][MAX_SYMBOLS];
 int gotoTable[MAX_STATES][MAX_SYMBOLS];
 State states[MAX_STATES];
 int stateCount = 0;
 
+
 char firstSets[MAX_SYMBOLS][MAX_SYMBOLS];
 char followSets[MAX_SYMBOLS][MAX_SYMBOLS];
 int firstCount[MAX_SYMBOLS];
 int followCount[MAX_SYMBOLS];
+
 
 // Function Prototypes
 void inputGrammar();
@@ -1015,6 +1102,7 @@ void printProduction(int prodNum);
 void printItem(Item item);
 bool isTerminal(char c);
 bool isNonTerminal(char c);
+
 
 int main() {
     char input[MAX_INPUT];
@@ -1072,6 +1160,7 @@ int main() {
     return 0;
 }
 
+
 void inputGrammar() {
     printf("Enter number of productions: ");
     scanf("%d", &prodCount);
@@ -1099,6 +1188,7 @@ void inputGrammar() {
         }
     }
 }
+
 
 void extractSymbols() {
     tCount = 0;
@@ -1138,6 +1228,7 @@ void extractSymbols() {
     terminals[tCount++] = '$';
 }
 
+
 void augmentGrammar() {
     for (int i = prodCount; i > 0; i--) {
         productions[i] = productions[i-1];
@@ -1155,6 +1246,7 @@ void augmentGrammar() {
     nonTerminals[0] = '\'';
     ntCount++;
 }
+
 
 void computeFirstSets() {
     for (int i = 0; i < ntCount; i++) {
@@ -1228,6 +1320,7 @@ void computeFirstSets() {
         printf("}\n");
     }
 }
+
 
 void computeFollowSets() {
     for (int i = 0; i < ntCount; i++) {
@@ -1307,6 +1400,7 @@ void computeFollowSets() {
     }
 }
 
+
 void closure(State *state) {
     bool changed = true;
     
@@ -1340,6 +1434,7 @@ void closure(State *state) {
     }
 }
 
+
 State gotoState(State *s, char symbol) {
     State newState;
     newState.itemCount = 0;
@@ -1362,6 +1457,7 @@ State gotoState(State *s, char symbol) {
     
     return newState;
 }
+
 
 bool stateExists(State *s, int *index) {
     for (int i = 0; i < stateCount; i++) {
@@ -1391,6 +1487,7 @@ bool stateExists(State *s, int *index) {
     return false;
 }
 
+
 bool itemExists(State *s, Item item) {
     for (int i = 0; i < s->itemCount; i++) {
         if (s->items[i].prodNum == item.prodNum && 
@@ -1401,11 +1498,13 @@ bool itemExists(State *s, Item item) {
     return false;
 }
 
+
 void addItem(State *s, Item item) {
     if (!itemExists(s, item)) {
         s->items[s->itemCount++] = item;
     }
 }
+
 
 void buildLR0Automaton() {
     stateCount = 0;
@@ -1447,6 +1546,7 @@ void buildLR0Automaton() {
     
     printf("Total states: %d\n", stateCount);
 }
+
 
 void constructSLRTable() {
     // Initialize tables
@@ -1501,6 +1601,7 @@ void constructSLRTable() {
     }
 }
 
+
 void printGrammar() {
     for (int i = 0; i < prodCount; i++) {
         printf("%d. ", i);
@@ -1508,9 +1609,11 @@ void printGrammar() {
     }
 }
 
+
 void printProduction(int prodNum) {
     printf("%c -> %s\n", productions[prodNum].lhs, productions[prodNum].rhs);
 }
+
 
 void printItem(Item item) {
     printf("%c -> ", productions[item.prodNum].lhs);
@@ -1520,6 +1623,7 @@ void printItem(Item item) {
         if (i < strlen(rhs)) printf("%c", rhs[i]);
     }
 }
+
 
 void printStates() {
     for (int i = 0; i < stateCount; i++) {
@@ -1531,6 +1635,7 @@ void printStates() {
         }
     }
 }
+
 
 void printParsingTable() {
     printf("\n========================================\n");
@@ -1582,10 +1687,12 @@ void printParsingTable() {
     }
 }
 
+
 void initStack(Stack *s) {
     s->top = -1;
     push(s, 0, '$');
 }
+
 
 void push(Stack *s, int state, char symbol) {
     s->top++;
@@ -1593,9 +1700,11 @@ void push(Stack *s, int state, char symbol) {
     s->symbol[s->top] = symbol;
 }
 
+
 void pop(Stack *s, int count) {
     s->top -= count;
 }
+
 
 int getTerminalIndex(char c) {
     for (int i = 0; i < tCount; i++) {
@@ -1604,6 +1713,7 @@ int getTerminalIndex(char c) {
     return -1;
 }
 
+
 int getNonTerminalIndex(char c) {
     for (int i = 0; i < ntCount; i++) {
         if (nonTerminals[i] == c) return i;
@@ -1611,13 +1721,16 @@ int getNonTerminalIndex(char c) {
     return -1;
 }
 
+
 bool isTerminal(char c) {
     return !isupper(c) && c != '@';
 }
 
+
 bool isNonTerminal(char c) {
     return isupper(c) || c == '\'';
 }
+
 
 bool parseInput(char *input) {
     Stack stack;
@@ -1678,6 +1791,7 @@ bool parseInput(char *input) {
     }
 }
 
+
 void printStep(int step, Stack *s, char *input, int inputPos, char *action) {
     printf("%-6d ", step);
     for (int i = 0; i <= s->top; i++) {
@@ -1690,17 +1804,22 @@ void printStep(int step, Stack *s, char *input, int inputPos, char *action) {
     printf(" | %s | %s\n", input + inputPos, action);
 }
 
-TAC, QUADRUPLES AND TRIPLES FOR OPERATIONS ONLY
+
+TAC
+
 
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
 
+
 #define MAX 100
+
 
 char stack[MAX];
 int top = -1;
 int tempCount = 1;
+
 
 // Quadruple structure
 typedef struct {
@@ -1710,6 +1829,7 @@ typedef struct {
     char result[5];
 } Quad;
 
+
 // Triple structure
 typedef struct {
     char op;
@@ -1717,10 +1837,12 @@ typedef struct {
     char arg2[5];
 } Triple;
 
+
 Quad quadList[50];
 Triple tripleList[50];
 int quadIndex = 0;
 int tripleIndex = 0;
+
 
 void push(char c) { stack[++top] = c; }
 char pop() { return (top==-1) ? '\0' : stack[top--]; }
@@ -1730,6 +1852,7 @@ int precedence(char c) {
     if(c=='*'||c=='/') return 2;
     return 0;
 }
+
 
 // Convert infix to postfix
 void infixToPostfix(char* expr, char* postfix) {
@@ -1754,10 +1877,12 @@ void infixToPostfix(char* expr, char* postfix) {
     postfix[j] = '\0';
 }
 
+
 // Generate TAC, Quadruple, and Triple
 void generateTACandTables(char* postfix, char* lhs) {
     char stackOperands[50][5];
     int opTop=-1;
+
 
     for(int i=0; postfix[i]; i++) {
         if(isalpha(postfix[i])) {
@@ -1768,8 +1893,10 @@ void generateTACandTables(char* postfix, char* lhs) {
             strcpy(op1, stackOperands[opTop--]);
             sprintf(temp, "t%d", tempCount++);
 
+
             // TAC
             printf("%s = %s %c %s\n", temp, op1, postfix[i], op2);
+
 
             // Quadruple
             quadList[quadIndex].op = postfix[i];
@@ -1778,19 +1905,23 @@ void generateTACandTables(char* postfix, char* lhs) {
             strcpy(quadList[quadIndex].result, temp);
             quadIndex++;
 
+
             // Triple
             tripleList[tripleIndex].op = postfix[i];
             strcpy(tripleList[tripleIndex].arg1, op1);
             strcpy(tripleList[tripleIndex].arg2, op2);
             tripleIndex++;
 
+
             strcpy(stackOperands[++opTop], temp);
         }
     }
 
+
     // Final assignment to LHS
     printf("%s = %s\n\n", lhs, stackOperands[opTop]);
 }
+
 
 void printQuadruples() {
     printf("Quadruples Table:\n");
@@ -1800,6 +1931,7 @@ void printQuadruples() {
     printf("\n");
 }
 
+
 void printTriples() {
     printf("Triples Table:\n");
     printf("Index\tOp\tArg1\tArg2\n");
@@ -1808,10 +1940,12 @@ void printTriples() {
     printf("\n");
 }
 
+
 int main() {
     char code[100], postfix[100];
     printf("Enter arithmetic statement (e.g., a=b+c*d): ");
     scanf("%s", code);
+
 
     char *eq = strchr(code,'=');
     if(eq) {
@@ -1819,6 +1953,7 @@ int main() {
         strncpy(lhs, code, eq-code);
         lhs[eq-code] = '\0';
         char *rhs = eq+1;
+
 
         infixToPostfix(rhs, postfix);
         generateTACandTables(postfix, lhs);
@@ -1828,29 +1963,37 @@ int main() {
         printf("Invalid statement.\n");
     }
 
+
     return 0;
 }
 
+
 NFA TO DFA
+
 
 #include <stdio.h>
 #include <string.h>
+
 
 #define MAX_STATES 10
 #define MAX_SYMBOLS 10
 #define MAX_DFA_STATES 100
 
+
 int nfa[MAX_STATES][MAX_SYMBOLS][MAX_STATES];
 int nfa_states, nfa_symbols;
+
 
 typedef struct {
     int states[MAX_STATES];
     int count;
 } StateSet;
 
+
 StateSet dfa[MAX_DFA_STATES];
 int dfa_count = 0;
 int dfa_transitions[MAX_DFA_STATES][MAX_SYMBOLS];
+
 
 int is_in_dfa(StateSet s) {
     for (int i = 0; i < dfa_count; i++) {
@@ -1864,6 +2007,7 @@ int is_in_dfa(StateSet s) {
     }
     return -1;
 }
+
 
 StateSet union_set(StateSet s1, StateSet s2) {
     StateSet result = s1;
@@ -1880,6 +2024,7 @@ StateSet union_set(StateSet s1, StateSet s2) {
     }
     return result;
 }
+
 
 StateSet move(StateSet s, int symbol) {
     StateSet result;
@@ -1898,13 +2043,16 @@ StateSet move(StateSet s, int symbol) {
     return result;
 }
 
+
 int main() {
     printf("Enter number of NFA states: ");
     scanf("%d", &nfa_states);
     printf("Enter number of input symbols: ");
     scanf("%d", &nfa_symbols);
 
+
     memset(nfa, 0, sizeof(nfa));
+
 
     printf("Enter NFA transition table (1 if transition exists, 0 otherwise):\n");
     for (int i = 0; i < nfa_states; i++) {
@@ -1916,10 +2064,12 @@ int main() {
         }
     }
 
+
     // Initialize DFA with start state
     dfa[0].count = 1;
     dfa[0].states[0] = 0;
     dfa_count = 1;
+
 
     for (int i = 0; i < dfa_count; i++) {
         for (int j = 0; j < nfa_symbols; j++) {
@@ -1934,6 +2084,7 @@ int main() {
             }
         }
     }
+
 
     // Print DFA transition table
     printf("\nDFA Transition Table:\n");
@@ -1951,149 +2102,901 @@ int main() {
         printf("\n");
     }
 
+
     return 0;
 }
-
-EXAMPLE INPUT 
-Enter number of NFA states: 3
-Enter number of input symbols: 2
-Enter NFA transition table (1 if transition exists, 0 otherwise):
-State 0, Symbol 0: 1 1 0
-State 0, Symbol 1: 1 0 0
-State 1, Symbol 0: 0 0 0
-State 1, Symbol 1: 0 0 1
-State 2, Symbol 0: 0 0 0
-State 2, Symbol 1: 0 0 0
-
 
 OPERATOR PRECEDENCE
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 
-#define MAX 20
-#define MAX_PROD 20
-#define MAX_TERMINALS 20
+#define MAX 100
 
+typedef struct {
+    char left;
+    char right[MAX];
+} Production;
+
+Production grammar[MAX];
+int numProductions = 0;
+
+// Operator precedence table
+char precedenceTable[MAX][MAX];
+char terminals[MAX];
 char nonTerminals[MAX];
-int nNonTerminals = 0;
+int numTerminals = 0;
+int numNonTerminals = 0;
 
-char terminals[MAX_TERMINALS];
-int nTerminals = 0;
+// Stack for parsing
+typedef struct {
+    char items[MAX];
+    int top;
+} Stack;
 
-char productions[MAX_PROD][MAX];
-int nProductions = 0;
-
-int firstVT[MAX_PROD][MAX_TERMINALS];  // firstVT sets
-int lastVT[MAX_PROD][MAX_TERMINALS];   // lastVT sets
-
-char precedenceTable[MAX_TERMINALS][MAX_TERMINALS];
-
-int indexOf(char arr[], int n, char c) {
-    for (int i=0;i<n;i++)
-        if (arr[i]==c) return i;
-    return -1;
+void initStack(Stack *s) {
+    s->top = -1;
 }
 
-int isTerminal(char c) {
-    return indexOf(terminals, nTerminals, c) != -1;
+int isEmpty(Stack *s) {
+    return s->top == -1;
 }
 
-void addTerminal(char c) {
-    if (indexOf(terminals, nTerminals, c) == -1)
-        terminals[nTerminals++] = c;
+void push(Stack *s, char val) {
+    if (s->top < MAX - 1) {
+        s->items[++(s->top)] = val;
+    }
+}
+
+char pop(Stack *s) {
+    if (!isEmpty(s)) {
+        return s->items[(s->top)--];
+    }
+    return '\0';
+}
+
+char peek(Stack *s) {
+    if (!isEmpty(s)) {
+        return s->items[s->top];
+    }
+    return '\0';
+}
+
+int isTerminal(char ch) {
+    for (int i = 0; i < numTerminals; i++) {
+        if (terminals[i] == ch) return 1;
+    }
+    return 0;
+}
+
+int isNonTerminal(char ch) {
+    for (int i = 0; i < numNonTerminals; i++) {
+        if (nonTerminals[i] == ch) return 1;
+    }
+    return 0;
+}
+
+void addTerminal(char ch) {
+    for (int i = 0; i < numTerminals; i++) {
+        if (terminals[i] == ch) return;
+    }
+    terminals[numTerminals++] = ch;
+}
+
+void addNonTerminal(char ch) {
+    for (int i = 0; i < numNonTerminals; i++) {
+        if (nonTerminals[i] == ch) return;
+    }
+    nonTerminals[numNonTerminals++] = ch;
 }
 
 void inputGrammar() {
     printf("Enter number of productions: ");
-    scanf("%d", &nProductions);
-    getchar();
-    printf("Enter productions (e.g., E->E+T):\n");
-    for (int i=0;i<nProductions;i++) {
-        fgets(productions[i], MAX, stdin);
-        productions[i][strcspn(productions[i], "\n")] = 0;
-        if (indexOf(nonTerminals, nNonTerminals, productions[i][0]) == -1)
-            nonTerminals[nNonTerminals++] = productions[i][0];
-        for (int j=3; productions[i][j]!='\0'; j++)
-            if (!isupper(productions[i][j]) && productions[i][j]!='|')
-                addTerminal(productions[i][j]);
-    }
-}
-
-void initTable() {
-    for (int i=0;i<nTerminals;i++)
-        for (int j=0;j<nTerminals;j++)
-            precedenceTable[i][j] = ' ';
-}
-
-// Simplified: firstVT & lastVT calculation (direct terminal after/before non-terminal)
-void calculatePrecedenceTable() {
-    for (int p=0;p<nProductions;p++) {
-        char *rhs = productions[p]+3;
-        int len = strlen(rhs);
-        for (int i=0;i<len;i++) {
-            if (isTerminal(rhs[i])) {
-                if (i+1<len && isTerminal(rhs[i+1])) {
-                    int row = indexOf(terminals, nTerminals, rhs[i]);
-                    int col = indexOf(terminals, nTerminals, rhs[i+1]);
-                    precedenceTable[row][col] = '=';
+    scanf("%d", &numProductions);
+    getchar(); // consume newline
+    
+    printf("\nEnter productions (format: E->E+T or E->T):\n");
+    for (int i = 0; i < numProductions; i++) {
+        printf("Production %d: ", i + 1);
+        char line[MAX];
+        fgets(line, MAX, stdin);
+        line[strcspn(line, "\n")] = '\0';
+        
+        // Parse production: A->alpha
+        char *arrow = strstr(line, "->");
+        if (arrow) {
+            grammar[i].left = line[0];
+            strcpy(grammar[i].right, arrow + 2);
+            
+            // Extract terminals and non-terminals
+            addNonTerminal(grammar[i].left);
+            for (int j = 0; grammar[i].right[j] != '\0'; j++) {
+                if (isupper(grammar[i].right[j])) {
+                    addNonTerminal(grammar[i].right[j]);
+                } else if (grammar[i].right[j] != 'e') { // 'e' for epsilon
+                    addTerminal(grammar[i].right[j]);
                 }
-            }
-            if (isTerminal(rhs[i]) && i+1<len && isupper(rhs[i+1])) {
-                for (int t=0;t<nTerminals;t++)
-                    precedenceTable[indexOf(terminals, nTerminals, rhs[i])][t] = '<';
-            }
-            if (isupper(rhs[i]) && i+1<len && isTerminal(rhs[i+1])) {
-                precedenceTable[indexOf(terminals, nTerminals, rhs[i+1])][indexOf(terminals, nTerminals, rhs[i])] = '>';
             }
         }
     }
+    
+    // Add $ as end marker
+    addTerminal('$');
+    
+    printf("\nTerminals: ");
+    for (int i = 0; i < numTerminals; i++) {
+        printf("%c ", terminals[i]);
+    }
+    printf("\nNon-terminals: ");
+    for (int i = 0; i < numNonTerminals; i++) {
+        printf("%c ", nonTerminals[i]);
+    }
+    printf("\n");
 }
 
-void printTable() {
-    printf("\nOperator Precedence Table:\n   ");
-    for (int i=0;i<nTerminals;i++)
-        printf("%c ", terminals[i]);
+void buildPrecedenceTable() {
+    printf("\nEnter operator precedence relations:\n");
+    printf("Use: < (less than), > (greater than), = (equal)\n");
+    printf("Format: operator1 relation operator2 (e.g., + < *)\n");
+    printf("Enter 'done' when finished\n\n");
+    
+    // Initialize table
+    for (int i = 0; i < numTerminals; i++) {
+        for (int j = 0; j < numTerminals; j++) {
+            precedenceTable[i][j] = ' ';
+        }
+    }
+    
+    char op1, op2, relation;
+    char line[MAX];
+    
+    while (1) {
+        printf("Relation: ");
+        fgets(line, MAX, stdin);
+        line[strcspn(line, "\n")] = '\0';
+        
+        if (strcmp(line, "done") == 0) break;
+        
+        if (sscanf(line, " %c %c %c", &op1, &relation, &op2) == 3) {
+            int idx1 = -1, idx2 = -1;
+            for (int i = 0; i < numTerminals; i++) {
+                if (terminals[i] == op1) idx1 = i;
+                if (terminals[i] == op2) idx2 = i;
+            }
+            
+            if (idx1 != -1 && idx2 != -1) {
+                precedenceTable[idx1][idx2] = relation;
+            }
+        }
+    }
+    
+    // Display precedence table
+    printf("\nOperator Precedence Table:\n");
+    printf("   ");
+    for (int j = 0; j < numTerminals; j++) {
+        printf("%c ", terminals[j]);
+    }
     printf("\n");
-    for (int i=0;i<nTerminals;i++) {
+    
+    for (int i = 0; i < numTerminals; i++) {
         printf("%c  ", terminals[i]);
-        for (int j=0;j<nTerminals;j++)
+        for (int j = 0; j < numTerminals; j++) {
             printf("%c ", precedenceTable[i][j]);
+        }
         printf("\n");
     }
 }
 
-int main() {
-    inputGrammar();
-    initTable();
-    calculatePrecedenceTable();
-    printTable();
+char getPrecedence(char top, char input) {
+    int idx1 = -1, idx2 = -1;
+    
+    for (int i = 0; i < numTerminals; i++) {
+        if (terminals[i] == top) idx1 = i;
+        if (terminals[i] == input) idx2 = i;
+    }
+    
+    if (idx1 != -1 && idx2 != -1) {
+        return precedenceTable[idx1][idx2];
+    }
+    return ' ';
+}
 
-    char input[50];
-    printf("\nEnter input string ending with $: ");
-    scanf("%s", input);
+int findHandle(char *str, int *start, int *end) {
+    // Find rightmost handle in the stack
+    for (int i = strlen(str) - 1; i >= 0; i--) {
+        for (int j = 0; j < numProductions; j++) {
+            int len = strlen(grammar[j].right);
+            if (i >= len - 1) {
+                int match = 1;
+                for (int k = 0; k < len; k++) {
+                    if (str[i - len + 1 + k] != grammar[j].right[k]) {
+                        match = 0;
+                        break;
+                    }
+                }
+                if (match) {
+                    *start = i - len + 1;
+                    *end = i;
+                    return j;
+                }
+            }
+        }
+    }
+    return -1;
+}
 
-    // Parsing logic: simplified shift/reduce based on precedence table
-    char stack[50] = "$";
-    int top = 0;
+void parse(char *input) {
+    Stack stack;
+    initStack(&stack);
+    
+    char str[MAX];
+    strcat(input, "$"); // Add end marker
+    
     int i = 0;
-    printf("\nStack\tInput\tAction\n");
-    while (!(stack[top]=='$' && input[i]=='$')) {
-        char a = input[i];
-        char s = stack[top];
-        int row = indexOf(terminals, nTerminals, s);
-        int col = indexOf(terminals, nTerminals, a);
-        if (precedenceTable[row][col]=='<' || precedenceTable[row][col]=='=') {
-            stack[++top] = a;
-            printf("%s\t%s\tShift %c\n", stack, &input[i], a);
-            i++;
-        } else if (precedenceTable[row][col]=='>') {
-            printf("%s\t%s\tReduce %c\n", stack, &input[i], stack[top]);
-            top--;
-        } else {
-            printf("Error: No precedence defined for %c and %c\n", s, a);
+    push(&stack, '$');
+    
+    printf("\n%-20s %-20s %-10s\n", "Stack", "Input", "Action");
+    printf("--------------------------------------------------------\n");
+    
+    while (1) {
+        // Build stack string for display
+        strcpy(str, "");
+        for (int j = 0; j <= stack.top; j++) {
+            char temp[2] = {stack.items[j], '\0'};
+            strcat(str, temp);
+        }
+        
+        printf("%-20s %-20s ", str, &input[i]);
+        
+        char topChar = peek(&stack);
+        
+        // Skip non-terminals on stack
+        while (isNonTerminal(topChar) && !isEmpty(&stack)) {
+            pop(&stack);
+            topChar = peek(&stack);
+        }
+        
+        char inputChar = input[i];
+        
+        if (topChar == '$' && inputChar == '$') {
+            printf("Accept\n");
             break;
+        }
+        
+        char relation = getPrecedence(topChar, inputChar);
+        
+        if (relation == '<' || relation == '=') {
+            push(&stack, inputChar);
+            i++;
+            printf("Shift %c\n", inputChar);
+        } else if (relation == '>') {
+            // Reduce
+            strcpy(str, "");
+            for (int j = 0; j <= stack.top; j++) {
+                char temp[2] = {stack.items[j], '\0'};
+                strcat(str, temp);
+            }
+            
+            int start, end;
+            int prodIdx = findHandle(str, &start, &end);
+            
+            if (prodIdx != -1) {
+                // Pop handle
+                int handleLen = end - start + 1;
+                for (int j = 0; j < handleLen; j++) {
+                    pop(&stack);
+                }
+                push(&stack, grammar[prodIdx].left);
+                printf("Reduce by %c->%s\n", grammar[prodIdx].left, grammar[prodIdx].right);
+            } else {
+                printf("Error: No production found\n");
+                break;
+            }
+        } else {
+            printf("Error: No precedence relation\n");
+            break;
+        }
+    }
+}
+
+int main() {
+    printf("========================================\n");
+    printf("  OPERATOR PRECEDENCE PARSER\n");
+    printf("========================================\n\n");
+    
+    inputGrammar();
+    buildPrecedenceTable();
+    
+    char input[MAX];
+    printf("\nEnter input string to parse: ");
+    scanf("%s", input);
+    
+    parse(input);
+    
+    return 0;
+}
+
+DAG, SYNTAX TREE, QUADRUPLES, TRIPLES, INDIRECT TRIPLES
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+
+#define MAX 100
+
+// Structure for Syntax Tree Node
+typedef struct TreeNode {
+    char data;
+    struct TreeNode *left, *right;
+    int isUnary; // Flag for unary operators
+} TreeNode;
+
+// Structure for Quadruple
+typedef struct {
+    char op;
+    char arg1[10];
+    char arg2[10];
+    char result[10];
+} Quadruple;
+
+// Structure for Triple
+typedef struct {
+    char op;
+    char arg1[10];
+    char arg2[10];
+} Triple;
+
+// Structure for DAG Node
+typedef struct DAGNode {
+    char data;
+    struct DAGNode *left, *right;
+    int id;
+    int isUnary;
+} DAGNode;
+
+// Global variables
+Quadruple quads[MAX];
+Triple triples[MAX];
+int quadCount = 0, tripleCount = 0, tempCount = 0;
+DAGNode* dagNodes[MAX];
+int dagCount = 0;
+
+// Stack for operators and operands
+char opStack[MAX];
+TreeNode* nodeStack[MAX];
+int opTop = -1, nodeTop = -1;
+
+// Function prototypes
+int precedence(char op);
+int isOperator(char c);
+TreeNode* createNode(char data, int isUnary);
+TreeNode* buildSyntaxTree(char* postfix);
+void inorderTraversal(TreeNode* root);
+void generateQuadruples(TreeNode* root, char* result);
+void generateTriples(TreeNode* root);
+void printQuadruples();
+void printTriples();
+void printIndirectTriples();
+DAGNode* createDAGNode(char data, int id, int isUnary);
+DAGNode* findDAGNode(char op, DAGNode* left, DAGNode* right, int isUnary);
+DAGNode* buildDAG(char* postfix);
+void printTree(TreeNode* root, char* prefix, int isRight);
+void printDAGGraph(DAGNode* root);
+void printDAGTree(DAGNode* root, char* prefix, int isRight);
+char* infixToPostfix(char* infix);
+
+// Check precedence of operators
+int precedence(char op) {
+    if (op == '+' || op == '-') return 1;
+    if (op == '*' || op == '/') return 2;
+    if (op == '~') return 3; // Unary minus (higher precedence)
+    return 0;
+}
+
+// Check if character is an operator
+int isOperator(char c) {
+    return (c == '+' || c == '-' || c == '*' || c == '/' || c == '~');
+}
+
+// Create a new tree node
+TreeNode* createNode(char data, int isUnary) {
+    TreeNode* node = (TreeNode*)malloc(sizeof(TreeNode));
+    node->data = data;
+    node->left = node->right = NULL;
+    node->isUnary = isUnary;
+    return node;
+}
+
+// Convert infix to postfix with unary operator support
+char* infixToPostfix(char* infix) {
+    static char postfix[MAX];
+    int i, j = 0;
+    opTop = -1;
+    int lastWasOperator = 1; // Track if last token was operator or '('
+    
+    for (i = 0; infix[i] != '\0'; i++) {
+        if (isspace(infix[i])) continue;
+        
+        if (isalnum(infix[i])) {
+            postfix[j++] = infix[i];
+            lastWasOperator = 0;
+        }
+        else if (infix[i] == '(') {
+            opStack[++opTop] = infix[i];
+            lastWasOperator = 1;
+        }
+        else if (infix[i] == ')') {
+            while (opTop >= 0 && opStack[opTop] != '(') {
+                postfix[j++] = opStack[opTop--];
+            }
+            if (opTop >= 0) opTop--; // Pop '('
+            lastWasOperator = 0;
+        }
+        else if (infix[i] == '-' && lastWasOperator) {
+            // Unary minus - convert to '~'
+            while (opTop >= 0 && precedence(opStack[opTop]) >= precedence('~')) {
+                postfix[j++] = opStack[opTop--];
+            }
+            opStack[++opTop] = '~';
+            lastWasOperator = 1;
+        }
+        else if (infix[i] == '+' && lastWasOperator) {
+            // Unary plus - just skip it
+            lastWasOperator = 1;
+        }
+        else if (isOperator(infix[i])) {
+            while (opTop >= 0 && opStack[opTop] != '(' && 
+                   precedence(opStack[opTop]) >= precedence(infix[i])) {
+                postfix[j++] = opStack[opTop--];
+            }
+            opStack[++opTop] = infix[i];
+            lastWasOperator = 1;
+        }
+    }
+    
+    while (opTop >= 0) {
+        postfix[j++] = opStack[opTop--];
+    }
+    postfix[j] = '\0';
+    return postfix;
+}
+
+// Build syntax tree from postfix expression
+TreeNode* buildSyntaxTree(char* postfix) {
+    nodeTop = -1;
+    
+    for (int i = 0; postfix[i] != '\0'; i++) {
+        if (postfix[i] == '~') {
+            // Unary minus
+            TreeNode* node = createNode('-', 1);
+            node->right = nodeStack[nodeTop--];
+            nodeStack[++nodeTop] = node;
+        }
+        else if (isOperator(postfix[i])) {
+            // Binary operator
+            TreeNode* node = createNode(postfix[i], 0);
+            node->right = nodeStack[nodeTop--];
+            node->left = nodeStack[nodeTop--];
+            nodeStack[++nodeTop] = node;
+        }
+        else {
+            // Operand
+            TreeNode* node = createNode(postfix[i], 0);
+            nodeStack[++nodeTop] = node;
+        }
+    }
+    return nodeStack[nodeTop];
+}
+
+// Inorder traversal of syntax tree
+void inorderTraversal(TreeNode* root) {
+    if (root == NULL) return;
+    
+    if (root->isUnary) {
+        printf("(-");
+        inorderTraversal(root->right);
+        printf(")");
+    } else if (isOperator(root->data)) {
+        printf("(");
+        inorderTraversal(root->left);
+        printf("%c", root->data);
+        inorderTraversal(root->right);
+        printf(")");
+    } else {
+        printf("%c", root->data);
+    }
+}
+
+// Generate quadruples from syntax tree
+void generateQuadruples(TreeNode* root, char* result) {
+    if (root == NULL) return;
+    
+    if (!isOperator(root->data)) {
+        result[0] = root->data;
+        result[1] = '\0';
+        return;
+    }
+    
+    if (root->isUnary) {
+        // Unary operator
+        char rightArg[10];
+        generateQuadruples(root->right, rightArg);
+        
+        sprintf(result, "t%d", tempCount++);
+        quads[quadCount].op = root->data;
+        strcpy(quads[quadCount].arg1, rightArg);
+        strcpy(quads[quadCount].arg2, "");
+        strcpy(quads[quadCount].result, result);
+        quadCount++;
+    } else {
+        // Binary operator
+        char leftArg[10], rightArg[10];
+        generateQuadruples(root->left, leftArg);
+        generateQuadruples(root->right, rightArg);
+        
+        sprintf(result, "t%d", tempCount++);
+        quads[quadCount].op = root->data;
+        strcpy(quads[quadCount].arg1, leftArg);
+        strcpy(quads[quadCount].arg2, rightArg);
+        strcpy(quads[quadCount].result, result);
+        quadCount++;
+    }
+}
+
+// Count operators in subtree
+int countOps(TreeNode* root) {
+    if (root == NULL || !isOperator(root->data)) return 0;
+    return 1 + countOps(root->left) + countOps(root->right);
+}
+
+// Generate triples from syntax tree
+void generateTriples(TreeNode* root) {
+    if (root == NULL || !isOperator(root->data)) return;
+    
+    int leftOps = countOps(root->left);
+    
+    generateTriples(root->left);
+    generateTriples(root->right);
+    
+    triples[tripleCount].op = root->data;
+    
+    if (root->isUnary) {
+        // Unary operator
+        triples[tripleCount].arg1[0] = '\0';
+        
+        if (root->right && isOperator(root->right->data)) {
+            sprintf(triples[tripleCount].arg2, "(%d)", tripleCount - 1);
+        } else if (root->right) {
+            triples[tripleCount].arg2[0] = root->right->data;
+            triples[tripleCount].arg2[1] = '\0';
+        }
+    } else {
+        // Binary operator - left argument
+        if (root->left && isOperator(root->left->data)) {
+            int leftOpsCount = countOps(root->left);
+            sprintf(triples[tripleCount].arg1, "(%d)", tripleCount - leftOpsCount - countOps(root->right));
+        } else if (root->left) {
+            triples[tripleCount].arg1[0] = root->left->data;
+            triples[tripleCount].arg1[1] = '\0';
+        }
+        
+        // Binary operator - right argument
+        if (root->right && isOperator(root->right->data)) {
+            sprintf(triples[tripleCount].arg2, "(%d)", tripleCount - 1);
+        } else if (root->right) {
+            triples[tripleCount].arg2[0] = root->right->data;
+            triples[tripleCount].arg2[1] = '\0';
+        }
+    }
+    
+    tripleCount++;
+}
+
+// Print quadruples
+void printQuadruples() {
+    printf("\n=== QUADRUPLES ===\n");
+    printf("%-5s %-5s %-5s %-5s %-5s\n", "No.", "Op", "Arg1", "Arg2", "Result");
+    printf("------------------------------------\n");
+    for (int i = 0; i < quadCount; i++) {
+        printf("%-5d %-5c %-5s %-5s %-5s\n", i, quads[i].op, 
+               quads[i].arg1, 
+               strlen(quads[i].arg2) > 0 ? quads[i].arg2 : "-", 
+               quads[i].result);
+    }
+}
+
+// Print triples
+void printTriples() {
+    printf("\n=== TRIPLES ===\n");
+    printf("%-5s %-5s %-10s %-10s\n", "No.", "Op", "Arg1", "Arg2");
+    printf("------------------------------------\n");
+    for (int i = 0; i < tripleCount; i++) {
+        printf("%-5d %-5c %-10s %-10s\n", i, triples[i].op, 
+               strlen(triples[i].arg1) > 0 ? triples[i].arg1 : "-",
+               triples[i].arg2);
+    }
+}
+
+// Print indirect triples
+void printIndirectTriples() {
+    printf("\n=== INDIRECT TRIPLES ===\n");
+    printf("Statement Table:\n");
+    for (int i = 0; i < tripleCount; i++) {
+        printf("%d -> (%d)\n", i, i);
+    }
+    printf("\nTriple Table:\n");
+    printf("%-5s %-5s %-10s %-10s\n", "No.", "Op", "Arg1", "Arg2");
+    printf("------------------------------------\n");
+    for (int i = 0; i < tripleCount; i++) {
+        printf("%-5d %-5c %-10s %-10s\n", i, triples[i].op, 
+               strlen(triples[i].arg1) > 0 ? triples[i].arg1 : "-",
+               triples[i].arg2);
+    }
+}
+
+// Create DAG node
+DAGNode* createDAGNode(char data, int id, int isUnary) {
+    DAGNode* node = (DAGNode*)malloc(sizeof(DAGNode));
+    node->data = data;
+    node->left = node->right = NULL;
+    node->id = id;
+    node->isUnary = isUnary;
+    return node;
+}
+
+// Find existing DAG node with same operation
+DAGNode* findDAGNode(char op, DAGNode* left, DAGNode* right, int isUnary) {
+    for (int i = 0; i < dagCount; i++) {
+        if (dagNodes[i]->data == op && 
+            dagNodes[i]->isUnary == isUnary &&
+            dagNodes[i]->left == left && 
+            dagNodes[i]->right == right) {
+            return dagNodes[i];
+        }
+    }
+    return NULL;
+}
+
+// Build DAG from postfix expression
+DAGNode* buildDAG(char* postfix) {
+    DAGNode* stack[MAX];
+    int top = -1;
+    
+    for (int i = 0; postfix[i] != '\0'; i++) {
+        if (postfix[i] == '~') {
+            // Unary minus
+            DAGNode* right = stack[top--];
+            DAGNode* existing = findDAGNode('-', NULL, right, 1);
+            
+            if (existing) {
+                stack[++top] = existing;
+            } else {
+                DAGNode* node = createDAGNode('-', dagCount, 1);
+                node->right = right;
+                dagNodes[dagCount++] = node;
+                stack[++top] = node;
+            }
+        }
+        else if (isOperator(postfix[i])) {
+            DAGNode* right = stack[top--];
+            DAGNode* left = stack[top--];
+            
+            DAGNode* existing = findDAGNode(postfix[i], left, right, 0);
+            if (existing) {
+                stack[++top] = existing;
+            } else {
+                DAGNode* node = createDAGNode(postfix[i], dagCount, 0);
+                node->left = left;
+                node->right = right;
+                dagNodes[dagCount++] = node;
+                stack[++top] = node;
+            }
+        } else {
+            DAGNode* node = createDAGNode(postfix[i], dagCount, 0);
+            dagNodes[dagCount++] = node;
+            stack[++top] = node;
+        }
+    }
+    return stack[top];
+}
+
+// Print tree structure (for syntax tree)
+void printTree(TreeNode* root, char* prefix, int isRight) {
+    if (root == NULL) return;
+    
+    printf("%s", prefix);
+    printf("%s", isRight ? "└── " : "├── ");
+    
+    if (root->isUnary) {
+        printf("(UNARY -)");
+    } else {
+        printf("%c", root->data);
+    }
+    printf("\n");
+    
+    char newPrefix[200];
+    sprintf(newPrefix, "%s%s", prefix, isRight ? "    " : "│   ");
+    
+    if (root->isUnary) {
+        printTree(root->right, newPrefix, 1);
+    } else if (root->left || root->right) {
+        if (root->left) printTree(root->left, newPrefix, 0);
+        if (root->right) printTree(root->right, newPrefix, 1);
+    }
+}
+
+// Print DAG as a proper graph with node list and edges
+void printDAGGraph(DAGNode* root) {
+    printf("\nNodes:\n");
+    printf("%-5s %-10s %-10s\n", "ID", "Value", "Type");
+    printf("--------------------------------\n");
+    
+    for (int i = 0; i < dagCount; i++) {
+        printf("%-5d %-10c %-10s\n", 
+               dagNodes[i]->id, 
+               dagNodes[i]->data,
+               dagNodes[i]->isUnary ? "Unary" : 
+               (isOperator(dagNodes[i]->data) ? "Binary Op" : "Operand"));
+    }
+    
+    printf("\nEdges:\n");
+    printf("%-10s -> %-10s\n", "From", "To");
+    printf("--------------------------------\n");
+    
+    for (int i = 0; i < dagCount; i++) {
+        if (dagNodes[i]->left) {
+            printf("Node %-5d -> Node %-5d (left)\n", 
+                   dagNodes[i]->id, dagNodes[i]->left->id);
+        }
+        if (dagNodes[i]->right) {
+            printf("Node %-5d -> Node %-5d (right)\n", 
+                   dagNodes[i]->id, dagNodes[i]->right->id);
+        }
+    }
+    
+    printf("\nRoot: Node %d\n", root->id);
+}
+
+// Print DAG structure as tree visualization
+void printDAGTree(DAGNode* root, char* prefix, int isRight) {
+    if (root == NULL) return;
+    
+    printf("%s", prefix);
+    printf("%s", isRight ? "└── " : "├── ");
+    
+    if (root->isUnary) {
+        printf("[%d] UNARY-%c", root->id, root->data);
+    } else {
+        printf("[%d] %c", root->id, root->data);
+    }
+    printf("\n");
+    
+    char newPrefix[200];
+    sprintf(newPrefix, "%s%s", prefix, isRight ? "    " : "│   ");
+    
+    if (root->isUnary) {
+        printDAGTree(root->right, newPrefix, 1);
+    } else if (root->left || root->right) {
+        if (root->left) printDAGTree(root->left, newPrefix, 0);
+        if (root->right) printDAGTree(root->right, newPrefix, 1);
+    }
+}
+
+int main() {
+    char infix[MAX], postfix[MAX];
+    char result[10];
+    
+    printf("Enter an arithmetic expression (e.g., a+b*c or a+-(b+c)): ");
+    fgets(infix, MAX, stdin);
+    infix[strcspn(infix, "\n")] = '\0';
+    
+    // Convert to postfix
+    strcpy(postfix, infixToPostfix(infix));
+    printf("\nPostfix Expression: %s\n", postfix);
+    printf("(Note: ~ represents unary minus)\n");
+    
+    // Build and display Syntax Tree
+    TreeNode* syntaxTree = buildSyntaxTree(postfix);
+    printf("\n=== SYNTAX TREE ===\n");
+    printf("Inorder: ");
+    inorderTraversal(syntaxTree);
+    printf("\n\nTree Structure:\n");
+    printTree(syntaxTree, "", 1);
+    
+    // Generate and display Quadruples
+    tempCount = 0;
+    generateQuadruples(syntaxTree, result);
+    printQuadruples();
+    
+    // Generate and display Triples
+    tripleCount = 0;
+    generateTriples(syntaxTree);
+    printTriples();
+    
+    // Display Indirect Triples
+    printIndirectTriples();
+    
+    // Build and display DAG
+    dagCount = 0;
+    DAGNode* dag = buildDAG(postfix);
+    printf("\n=== DAG (Directed Acyclic Graph) ===\n");
+    printf("\nTree View:\n");
+    printDAGTree(dag, "", 1);
+    printDAGGraph(dag);
+    
+    return 0;
+}
+
+CODE OPTIMIZATION - TIME FUNC ONLY
+
+#include <stdio.h>
+#include <time.h>
+#include <sys/time.h>
+
+// Function to get time in microseconds
+double get_time() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1000000.0 + tv.tv_usec;
+}
+
+// ========== YOUR FUNCTION 1 (Original/Unoptimized) ==========
+void function1() {
+    // Put your first function code here
+    int sum = 0;
+    for (int i = 0; i < 10000000; i++) {
+        sum = sum + i;
+    }
+}
+
+// ========== YOUR FUNCTION 2 (Modified/Optimized) ==========
+void function2() {
+    // Put your second function code here
+    long long sum = 0;
+    for (int i = 0; i < 10000000; i += 4) {
+        sum += i + (i+1) + (i+2) + (i+3);
+    }
+}
+
+int main() {
+    double start, end, time1, time2;
+    
+    printf("Testing Function Execution Times...\n\n");
+    
+    // Test Function 1
+    start = get_time();
+    function1();
+    end = get_time();
+    time1 = end - start;
+    
+    // Test Function 2
+    start = get_time();
+    function2();
+    end = get_time();
+    time2 = end - start;
+    
+    // Display Results
+    printf("Function 1 Time: %.2f microseconds (%.4f ms)\n", time1, time1/1000.0);
+    printf("Function 2 Time: %.2f microseconds (%.4f ms)\n", time2, time2/1000.0);
+    printf("\n");
+    printf("Time Difference: %.2f microseconds (%.4f ms)\n", 
+           time1 - time2, (time1 - time2)/1000.0);
+    
+    if (time1 > time2) {
+        printf("Function 2 is %.2fx FASTER\n", time1/time2);
+        printf("Improvement: %.2f%%\n", ((time1-time2)/time1)*100);
+    } else {
+        printf("Function 1 is %.2fx FASTER\n", time2/time1);
+        printf("Improvement: %.2f%%\n", ((time2-time1)/time2)*100);
+    }
+    
+    return 0;
+}
+
+
         }
     }
     printf("Parsing completed.\n");
@@ -2102,20 +3005,25 @@ int main() {
 
 
 
-YACC code for Email Verification
 
+YACC code for Email Verification
 
 %{
     #include <stdio.h>
     #include <string.h>
     int valid = 0;
 %}
-/* Rules Section */
+
+
 %%
-[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,} {
-    valid = 1;
-}
-"\n" {
+[abc]+ -> Choose from a,b,c
+(abc) -> Choose abc
+
+
+
+
+[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,} {valid = 1;}
+\n {
     if (valid)
         printf("\nValid email ID\n");
     else
@@ -2123,6 +3031,8 @@ YACC code for Email Verification
     valid = 0;
 }
 %%
+
+
 int yywrap(void) {}
 int main() {
     printf("Enter an email ID to check validity:\n");
@@ -2130,7 +3040,9 @@ int main() {
     return 0;
 }
 
+
 YACC code for Calculator
+
 
 %{
     #include <stdio.h>
@@ -2155,6 +3067,8 @@ ln \n
 {pow} {op=5;}
 {ln} {printf("\nThe Answer : %f\n\n", a);}
 %%
+
+
 int digi() {
     if(op == 0) 
         a = atof(yytext);
@@ -2178,7 +3092,9 @@ int yywrap() {
     return 1;
 }
 
+
 YACC code for Loop Construct
+
 
 %{
     #include <stdio.h>
@@ -2201,7 +3117,9 @@ int main() {
     return 0;
 }
 
+
 YACC code for Flow Control
+
 
 %{
     #include <stdio.h>
@@ -2224,96 +3142,4 @@ int yywrap() {
 int main() {
     yylex();
     return 0;
-}
-
-CODE OPTIMIZATION
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <ctype.h>
-#define MAX 100
-
-typedef struct {
-    char lhs[10];
-    char op1[10];
-    char op[3];
-    char op2[10];
-} TAC;
-
-TAC code[MAX];
-int n;
- 
-
-int isNumber(char *str) {
-    for (int i = 0; str[i]; i++)
-        if (!isdigit(str[i])) return 0;
-    return 1;
-}
-
- 
-// Constant folding
-void constantFolding() {
-    for (int i = 0; i < n; i++) {
-        if (isNumber(code[i].op1) && isNumber(code[i].op2)) {
-            int a = atoi(code[i].op1);
-            int b = atoi(code[i].op2);
-            int res;
-
-            if (strcmp(code[i].op, "+") == 0)
-                res = a + b;
-            else if (strcmp(code[i].op, "-") == 0)
-                res = a - b;
-            else if (strcmp(code[i].op, "*") == 0)
-                res = a * b;
-            else if (strcmp(code[i].op, "/") == 0 && b != 0)
-                res = a / b;
-            else
-                continue;
-            sprintf(code[i].op1, "%d", res);
-            strcpy(code[i].op, "=");
-            strcpy(code[i].op2, "");
-        }
-    }
-}
-
-void deadCodeElimination() {
-    int used[MAX] = {0};
-    for (int i = 0; i < n; i++) {
-        for (int j = 0; j < n; j++) {
-            if (strcmp(code[i].lhs, code[j].op1) == 0 ||
-                strcmp(code[i].lhs, code[j].op2) == 0)
-                used[i] = 1;
-        }
-    }
-
-    printf("\nAfter Dead Code Elimination:\n");
-    for (int i = 0; i < n; i++) {
-        if (used[i] || i == n - 1) // keep last line (usually output)
-            printf("%s = %s %s %s\n", code[i].lhs, code[i].op1, code[i].op, code[i].op2);
-    }
-}
-
- 
-
-int main() {
-    printf("Enter number of 3-address code statements: ");
-    scanf("%d", &n);
-    printf("Enter the code (e.g., t1 = 2 + 3):\n");
-    for (int i = 0; i < n; i++) {
-        scanf("%s = %s %s %s", code[i].lhs, code[i].op1, code[i].op, code[i].op2);
-    }
-
-    printf("\nOriginal Code:\n");
-    for (int i = 0; i < n; i++)
-        printf("%s = %s %s %s\n", code[i].lhs, code[i].op1, code[i].op, code[i].op2);
-
-    constantFolding();
-
-    printf("\nAfter Constant Folding:\n");
-    for (int i = 0; i < n; i++)
-        printf("%s = %s %s %s\n", code[i].lhs, code[i].op1, code[i].op, code[i].op2);
-
-    deadCodeElimination();
-    return 0;
-
 }
